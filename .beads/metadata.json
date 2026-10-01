@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "yaesu857",
+  "project_id": "52057a08-c9bc-40bd-a430-fcb0dcc32ce5"
+}
