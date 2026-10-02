@@ -66,6 +66,17 @@ bool bandAvailable(size_t index, RigModel model) {
   return index < kBandCount && (index != 2 || modelHas60m(model));
 }
 
+void dialRange(uint32_t hz, uint32_t& lo, uint32_t& hi) {
+  int b = bandIndexFor(hz);
+  if (b != kNoBand) {
+    lo = kBands[b].loHz;
+    hi = kBands[b].hiHz;
+  } else {
+    lo = hz / 1000000 * 1000000;
+    hi = lo + 1000000;
+  }
+}
+
 bool inRxRange(uint32_t hz) {
   for (const Range& r : kRxRanges) {
     if (hz >= r.lo && hz <= r.hi) {

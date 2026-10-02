@@ -28,6 +28,10 @@ constexpr int kNoBand = -1;
 int bandIndexFor(uint32_t hz);
 bool bandAvailable(size_t index, RigModel model);
 
+// Rango que muestra una escala de dial para esta frecuencia: la banda entera o, fuera de las
+// bandas, el MHz que la contiene.
+void dialRange(uint32_t hz, uint32_t& lo, uint32_t& hi);
+
 // Rangos de recepción comunes a FT-817/818/857/897.
 bool inRxRange(uint32_t hz);
 

@@ -45,7 +45,7 @@ class PrintHost : public UiHost {
 };
 
 static PrintHost host;
-static Ui ui(tft, kDefaultTheme, settings, host);
+static Ui ui(tft, settings, host);
 static uint32_t now = 1000;
 static const char* outDir = ".";
 

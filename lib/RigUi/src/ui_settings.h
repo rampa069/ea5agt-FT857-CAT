@@ -14,7 +14,7 @@ constexpr uint32_t kBaudRates[] = {4800, 9600, 38400};
 constexpr size_t kBaudCount = 3;
 
 struct Settings {
-  static constexpr uint16_t kVersion = 3;
+  static constexpr uint16_t kVersion = 4;
 
   uint16_t version;
   RigModel model;
@@ -34,6 +34,7 @@ struct Settings {
   char btPin[9];  // PIN clásico (HC-05/HC-06: 1234)
   // Pantalla (añadido en la versión 3: los campos nuevos siempre al final, ver migrate())
   bool invertColors;
+  uint8_t skin;  // versión 4: tema (0 Clásico, 1 Ámbar, 2 Nixie, 3 Dial)
 
   void setDefaults(const TouchCal& defaultTouch, bool defaultInvert);
   bool valid() const;  // tras cargar de NVS
