@@ -58,8 +58,9 @@ def from_bcd(data):
 class Radio:
     """Estado de la radio y respuesta a cada trama CAT."""
 
-    def __init__(self, model="857"):
+    def __init__(self, model="857", ack=False):
         self.model = model
+        self.ack = ack  # algunas radios confirman cada escritura con un byte 0x00
         self.lock = threading.Lock()
         self.vfo = {"A": [14_074_000, MODES["USB"]], "B": [7_074_000, MODES["LSB"]]}
         self.active = "A"
@@ -73,6 +74,13 @@ class Radio:
         self.high_swr = False
         self.split = False
         self.locked = False
+        self.clar_on = False
+        self.clar_hz = 0
+        self.rpt_shift = "SIMPLEX"
+        self.rpt_offset_hz = 600_000
+        self.tone_mode = "OFF"
+        self.ctcss = "88.5"
+        self.dcs = "023"
         self.eeprom = bytearray(0x1926)
 
     @property
@@ -113,6 +121,12 @@ class Radio:
 
     def handle(self, frame):
         """Procesa una trama de 5 bytes y devuelve la respuesta (b'' si no hay)."""
+        reply = self._handle(frame)
+        if reply is None:  # escritura aplicada
+            return b"\x00" if self.ack else b""
+        return reply
+
+    def _handle(self, frame):
         p, op = frame[:4], frame[4]
         with self.lock:
             if op == 0x03:
@@ -143,25 +157,58 @@ class Radio:
                 return b"\xF0" if already else b"\x00"
             if op == 0x01:
                 self.freq = from_bcd(p)
-                return b""
+                return None
             if op == 0x07:
                 self.mode = p[0] & 0x7F
-                return b""
+                return None
             if op == 0x81:
                 self.active = "B" if self.active == "A" else "A"
-                return b""
+                return None
             if op in (0x02, 0x82):
                 self.split = op == 0x02
-                return b""
+                return None
+            if op in (0x05, 0x85):
+                self.clar_on = op == 0x05
+                return None
+            if op == 0xF5:
+                self.clar_hz = int(p[2:4].hex()) * 10 * (-1 if p[0] else 1)
+                return None
+            if op == 0x09:
+                self.rpt_shift = {0x09: "-", 0x49: "+", 0x89: "SIMPLEX"}.get(p[0], self.rpt_shift)
+                return None
+            if op == 0xF9:
+                self.rpt_offset_hz = int(p.hex())
+                return None
+            if op == 0x0A:
+                self.tone_mode = {0x0A: "DCS", 0x2A: "TSQ", 0x4A: "ENC", 0x8A: "OFF"}.get(p[0], self.tone_mode)
+                return None
+            if op == 0x0B:
+                self.ctcss = f"{int(p[:2].hex()) / 10:.1f}"
+                return None
+            if op == 0x0C:
+                self.dcs = p[:2].hex()[1:]
+                return None
             if op in (0x00, 0x80):
                 self.locked = op == 0x00
-                return b""
+                return None
         return b""
 
     def describe(self):
         mode = MODE_NAMES.get(self.mode, f"0x{self.mode:02X}")
         state = f"TX PO={self.po}{' SWR!' if self.high_swr else ''}" if self.ptt else f"RX S={self.s_meter}"
-        return f"VFO-{self.active} {self.freq / 1e6:.5f} MHz {mode}{'-N' if self.narrow else ''} {state}"
+        extras = []
+        if self.split:
+            extras.append("SPLIT")
+        if self.clar_on or self.clar_hz:
+            extras.append(f"CLAR{'' if self.clar_on else '(off)'} {self.clar_hz:+d}Hz")
+        if self.rpt_shift != "SIMPLEX":
+            extras.append(f"RPT{self.rpt_shift}{self.rpt_offset_hz / 1e6:.3f}")
+        if self.tone_mode != "OFF":
+            extras.append(f"{self.tone_mode} {self.dcs if self.tone_mode == 'DCS' else self.ctcss}")
+        if self.locked:
+            extras.append("LOCK")
+        tail = (" " + " ".join(extras)) if extras else ""
+        return f"VFO-{self.active} {self.freq / 1e6:.5f} MHz {mode}{'-N' if self.narrow else ''} {state}{tail}"
 
 
 class Scenario(threading.Thread):
@@ -248,6 +295,7 @@ def main(argv=None):
     ap.add_argument("--baud", type=int, default=4800, choices=(4800, 9600, 38400))
     ap.add_argument("--model", default="857", choices=("817", "818", "857", "897"))
     ap.add_argument("--static", action="store_true", help="no animar el estado (frecuencia fija, sin TX)")
+    ap.add_argument("--ack", action="store_true", help="confirmar cada escritura con un byte 0x00")
     ap.add_argument("--drop-rate", type=float, default=0.0, help="fracción de respuestas que se pierden (0..1)")
     ap.add_argument("-v", "--verbose", action="store_true", help="mostrar cada trama")
     args = ap.parse_args(argv)
@@ -255,7 +303,7 @@ def main(argv=None):
     if not args.port and not args.pty:
         ap.error("indica un puerto o usa --pty")
 
-    radio = Radio(args.model)
+    radio = Radio(args.model, ack=args.ack)
     if not args.static:
         Scenario(radio, args.verbose).start()
 

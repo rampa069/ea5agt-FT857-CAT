@@ -61,6 +61,26 @@ class RadioTest(unittest.TestCase):
         self.r.handle(bytes([0, 0, 0, 0, 0x81]))
         self.assertEqual(self.r.active, "B")
 
+    def test_clarifier_repeater_tones(self):
+        r = self.r
+        self.assertEqual(r.handle(bytes([0, 0, 0, 0, 0x05])), b"")
+        self.assertTrue(r.clar_on)
+        r.handle(bytes([0x01, 0x00, 0x01, 0x23, 0xF5]))
+        self.assertEqual(r.clar_hz, -1230)
+        r.handle(bytes([0x49, 0, 0, 0, 0x09]))
+        self.assertEqual(r.rpt_shift, "+")
+        r.handle(bytes([0x05, 0x43, 0x21, 0x00, 0xF9]))
+        self.assertEqual(r.rpt_offset_hz, 5_432_100)
+        r.handle(bytes([0x2A, 0, 0, 0, 0x0A]))
+        r.handle(bytes([0x08, 0x85, 0, 0, 0x0B]))
+        r.handle(bytes([0x00, 0x23, 0, 0, 0x0C]))
+        self.assertEqual((r.tone_mode, r.ctcss, r.dcs), ("TSQ", "88.5", "023"))
+
+    def test_ack_option(self):
+        r = sim.Radio("857", ack=True)
+        self.assertEqual(r.handle(bytes([0, 0, 0, 0, 0x81])), b"\x00")
+        self.assertEqual(r.handle(bytes([0, 0, 0, 0, 0xE7]))[0] & 0x0F, r.s_meter)  # lecturas sin cambios
+
     def test_eeprom_read_and_write_ignored(self):
         self.r.eeprom[0x78:0x7A] = b"\x12\x34"
         self.assertEqual(self.r.handle(bytes([0x00, 0x79, 0, 0, 0xBB])), b"\x12\x34")

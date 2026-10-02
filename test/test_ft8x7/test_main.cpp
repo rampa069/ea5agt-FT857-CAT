@@ -191,6 +191,102 @@ static void test_cat_status_commands() {
   TEST_ASSERT_FALSE(ts.transmitting);
 }
 
+static void expectCommand(const uint8_t expected[5], const Command& c) {
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, c.bytes, 5);
+}
+
+static void test_set_frequency_manual_examples() {
+  Command c;
+  TEST_ASSERT_TRUE(makeSetFrequency(439700000UL, c));
+  const uint8_t e1[] = {0x43, 0x97, 0x00, 0x00, 0x01};
+  expectCommand(e1, c);
+  TEST_ASSERT_TRUE(makeSetFrequency(14234560UL, c));
+  const uint8_t e2[] = {0x01, 0x42, 0x34, 0x56, 0x01};
+  expectCommand(e2, c);
+  uint32_t hz = 0;
+  TEST_ASSERT_TRUE(decodeSetFrequency(c, hz));
+  TEST_ASSERT_EQUAL_UINT32(14234560UL, hz);
+}
+
+static void test_set_frequency_rejects_invalid() {
+  Command c = makeToggleVfo();
+  TEST_ASSERT_FALSE(makeSetFrequency(14074005UL, c));  // no múltiplo de 10 Hz
+  TEST_ASSERT_FALSE(makeSetFrequency(1000000000UL, c));
+  TEST_ASSERT_EQUAL_HEX8(0x81, c.bytes[4]);  // sin tocar
+}
+
+static void test_set_mode() {
+  Command c;
+  TEST_ASSERT_TRUE(makeSetMode(Mode::FM, c));
+  const uint8_t e[] = {0x08, 0x00, 0x00, 0x00, 0x07};
+  expectCommand(e, c);
+  TEST_ASSERT_FALSE(makeSetMode(Mode::Unknown, c));
+}
+
+static void test_toggle_commands() {
+  const uint8_t vfo[] = {0, 0, 0, 0, 0x81};
+  expectCommand(vfo, makeToggleVfo());
+  TEST_ASSERT_EQUAL_HEX8(0x02, makeSplit(true).bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x82, makeSplit(false).bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x05, makeClarifier(true).bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x85, makeClarifier(false).bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x00, makeLock(true).bytes[4]);
+  TEST_ASSERT_EQUAL_HEX8(0x80, makeLock(false).bytes[4]);
+}
+
+static void test_clarifier_offset() {
+  Command c;
+  TEST_ASSERT_TRUE(makeClarifierOffset(-1230, c));  // -1,23 kHz
+  const uint8_t e[] = {0x01, 0x00, 0x01, 0x23, 0xF5};
+  expectCommand(e, c);
+  TEST_ASSERT_TRUE(makeClarifierOffset(9990, c));
+  const uint8_t e2[] = {0x00, 0x00, 0x09, 0x99, 0xF5};
+  expectCommand(e2, c);
+  TEST_ASSERT_FALSE(makeClarifierOffset(10000, c));
+  TEST_ASSERT_FALSE(makeClarifierOffset(15, c));
+}
+
+static void test_repeater() {
+  const uint8_t minus[] = {0x09, 0, 0, 0, 0x09};
+  expectCommand(minus, makeRepeaterShift(RepeaterShift::Minus));
+  TEST_ASSERT_EQUAL_HEX8(0x89, makeRepeaterShift(RepeaterShift::Simplex).bytes[0]);
+  Command c;
+  TEST_ASSERT_TRUE(makeRepeaterOffset(5432100UL, c));  // ejemplo del manual
+  const uint8_t e[] = {0x05, 0x43, 0x21, 0x00, 0xF9};
+  expectCommand(e, c);
+  TEST_ASSERT_TRUE(makeRepeaterOffset(600000UL, c));
+  const uint8_t e2[] = {0x00, 0x60, 0x00, 0x00, 0xF9};
+  expectCommand(e2, c);
+  TEST_ASSERT_FALSE(makeRepeaterOffset(100000000UL, c));
+}
+
+static void test_tones() {
+  const uint8_t off[] = {0x8A, 0, 0, 0, 0x0A};
+  expectCommand(off, makeToneMode(ToneMode::Off));
+  Command c;
+  TEST_ASSERT_TRUE(makeCtcssTone(885, c));
+  const uint8_t ct[] = {0x08, 0x85, 0x00, 0x00, 0x0B};
+  expectCommand(ct, c);
+  TEST_ASSERT_TRUE(makeCtcssTone(2541, c));
+  TEST_ASSERT_FALSE(makeCtcssTone(886, c));
+  TEST_ASSERT_TRUE(makeDcsCode(23, c));
+  const uint8_t dcs[] = {0x00, 0x23, 0x00, 0x00, 0x0C};
+  expectCommand(dcs, c);
+  TEST_ASSERT_TRUE(makeDcsCode(754, c));
+  TEST_ASSERT_FALSE(makeDcsCode(24, c));
+}
+
+static void test_send_tolerates_missing_ack() {
+  MockPort port;
+  Ft8x7Cat cat(port);
+  TEST_ASSERT_FALSE(cat.send(makeToggleVfo()));  // sin confirmación: no es error
+  TEST_ASSERT_EQUAL_HEX8(0x81, port.written[4]);
+  const uint8_t ack = 0x00;
+  port.setReply(&ack, 1);
+  TEST_ASSERT_TRUE(cat.send(makeSplit(true)));
+  TEST_ASSERT_EQUAL(2, port.discards);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_make_command_layout);
@@ -208,5 +304,13 @@ int main() {
   RUN_TEST(test_cat_timeout_on_short_reply);
   RUN_TEST(test_cat_bad_data_on_invalid_bcd);
   RUN_TEST(test_cat_status_commands);
+  RUN_TEST(test_set_frequency_manual_examples);
+  RUN_TEST(test_set_frequency_rejects_invalid);
+  RUN_TEST(test_set_mode);
+  RUN_TEST(test_toggle_commands);
+  RUN_TEST(test_clarifier_offset);
+  RUN_TEST(test_repeater);
+  RUN_TEST(test_tones);
+  RUN_TEST(test_send_tolerates_missing_ack);
   return UNITY_END();
 }

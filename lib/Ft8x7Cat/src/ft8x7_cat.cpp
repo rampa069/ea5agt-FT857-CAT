@@ -12,10 +12,14 @@ const char* catResultName(CatResult result) {
 }
 
 CatResult Ft8x7Cat::transact(const Command& cmd, uint8_t* response, size_t len) {
+  return transact(cmd, response, len, timeoutMs_);
+}
+
+CatResult Ft8x7Cat::transact(const Command& cmd, uint8_t* response, size_t len, uint32_t timeoutMs) {
   // Sin checksum ni delimitadores: descartar restos de respuestas anteriores para no desalinear.
   port_.discardInput();
   port_.write(cmd.bytes, kCommandLength);
-  if (port_.read(response, len, timeoutMs_) != len) {
+  if (port_.read(response, len, timeoutMs) != len) {
     return CatResult::Timeout;
   }
   return CatResult::Ok;
@@ -46,6 +50,11 @@ CatResult Ft8x7Cat::readTxStatus(TxStatus& out) {
     out = decodeTxStatus(raw);
   }
   return r;
+}
+
+bool Ft8x7Cat::send(const Command& cmd) {
+  uint8_t ack;
+  return transact(cmd, &ack, 1, ackTimeoutMs_) == CatResult::Ok;
 }
 
 CatResult Ft8x7Cat::readEeprom(uint16_t address, uint8_t out[2]) {

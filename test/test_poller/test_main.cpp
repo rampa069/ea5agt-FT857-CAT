@@ -125,6 +125,56 @@ static void test_link_lost_after_consecutive_errors_and_recovers() {
   TEST_ASSERT_TRUE(poller.state().linked);
 }
 
+static void test_writes_have_priority_and_force_freq_read() {
+  FakeRadio radio;
+  Ft8x7Cat cat(radio);
+  RigPoller poller(cat);
+  uint32_t now = 0;
+  runSteps(poller, now, 2);  // 0x03, 0xF7
+
+  TEST_ASSERT_TRUE(poller.enqueue(makeToggleVfo()));
+  runSteps(poller, now, 2);
+  TEST_ASSERT_EQUAL_HEX8(0x81, radio.ops[2]);  // la escritura sale antes que el sondeo
+  TEST_ASSERT_EQUAL_HEX8(0x03, radio.ops[3]);  // y luego se relee la frecuencia
+  TEST_ASSERT_EQUAL_UINT32(1, poller.state().writeCount);
+}
+
+static void test_set_frequency_coalesces_and_updates_state() {
+  FakeRadio radio;
+  Ft8x7Cat cat(radio);
+  RigPoller poller(cat);
+  uint32_t now = 0;
+  runSteps(poller, now, 1);  // ya hay frecuencia leída
+
+  Command c;
+  for (uint32_t hz = 14074100; hz <= 14074500; hz += 100) {
+    TEST_ASSERT_TRUE(makeSetFrequency(hz, c));
+    TEST_ASSERT_TRUE(poller.enqueue(c));
+  }
+  TEST_ASSERT_TRUE(makeSetMode(Mode::CW, c));
+  TEST_ASSERT_TRUE(poller.enqueue(c));
+
+  runSteps(poller, now, 2);
+  TEST_ASSERT_EQUAL_HEX8(0x01, radio.ops[1]);
+  TEST_ASSERT_EQUAL_HEX8(0x07, radio.ops[2]);
+  TEST_ASSERT_EQUAL_UINT32(2, poller.state().writeCount);  // 5 frecuencias -> 1 envío
+  TEST_ASSERT_EQUAL_UINT32(14074500UL, poller.state().freq.hz);
+  TEST_ASSERT_EQUAL(Mode::CW, poller.state().freq.mode);
+}
+
+static void test_queue_full() {
+  FakeRadio radio;
+  Ft8x7Cat cat(radio);
+  RigPoller poller(cat);
+  for (size_t i = 0; i < RigPoller::kQueueSize; ++i) {
+    TEST_ASSERT_TRUE(poller.enqueue(makeToggleVfo()));
+  }
+  TEST_ASSERT_FALSE(poller.enqueue(makeToggleVfo()));
+  Command c;
+  TEST_ASSERT_TRUE(makeSetFrequency(7074000, c));
+  TEST_ASSERT_FALSE(poller.enqueue(c));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_schedule_order_in_receive);
@@ -132,5 +182,8 @@ int main() {
   RUN_TEST(test_respects_gap);
   RUN_TEST(test_skips_rx_status_while_transmitting);
   RUN_TEST(test_link_lost_after_consecutive_errors_and_recovers);
+  RUN_TEST(test_writes_have_priority_and_force_freq_read);
+  RUN_TEST(test_set_frequency_coalesces_and_updates_state);
+  RUN_TEST(test_queue_full);
   return UNITY_END();
 }
