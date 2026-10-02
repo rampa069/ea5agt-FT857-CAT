@@ -113,6 +113,16 @@ int main(int argc, char** argv) {
   frame(tx);
   save("ui_main_tx");
 
+  RigState meters = rigState(7074000, Mode::USB, 0x00, 0x29);  // TX, PO 9
+  meters.haveVfo = true;
+  meters.vfoB = true;
+  meters.haveSplit = true;
+  meters.split = true;
+  meters.haveMeters = true;
+  meters.meters = TxMeters{9, 3, 2, 5};
+  frame(meters);
+  save("ui_main_tx_meters");
+
   RigState down = rx;
   down.linked = false;
   frame(down);

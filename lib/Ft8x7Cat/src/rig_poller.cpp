@@ -72,6 +72,40 @@ void RigPoller::applyOptimistic(const Command& cmd) {
   }
 }
 
+void RigPoller::setExtras(const PollExtras& extras) {
+  extras_ = extras;
+  state_.haveVfo = state_.haveSplit = state_.haveMeters = false;
+  state_.eepromUnsupported = state_.metersUnsupported = false;
+  eepromErrors_ = meterErrors_ = 0;
+  eepromDue_ = extras.eeprom;
+}
+
+bool RigPoller::wantEepromRead(uint32_t nowMs) const {
+  // Sólo en RX con enlace, y nunca justo después de una escritura: primero se relee la frecuencia.
+  return extras_.eeprom && !state_.eepromUnsupported && state_.linked && !state_.tx.transmitting &&
+         slot_ != 0 && (eepromDue_ || nowMs - lastEepromMs_ >= kExtrasEveryMs);
+}
+
+// Las lecturas extra no cuentan para el enlace: si fallan mientras las básicas responden, la radio
+// no las admite (algunos FT-857 no responden a 0xBB) y se dejan de pedir.
+void RigPoller::recordExtra(Query q, CatResult r) {
+  bool eeprom = q == Query::Vfo || q == Query::Split;
+  uint8_t& errors = eeprom ? eepromErrors_ : meterErrors_;
+  if (r == CatResult::Ok) {
+    errors = 0;
+    return;
+  }
+  if (++errors >= kExtraGiveUpErrors) {
+    if (eeprom) {
+      state_.eepromUnsupported = true;
+      state_.haveVfo = state_.haveSplit = false;
+    } else {
+      state_.metersUnsupported = true;
+      state_.haveMeters = false;
+    }
+  }
+}
+
 bool RigPoller::step(uint32_t nowMs) {
   uint32_t gap = state_.linked ? gapMs_ : retryGapMs_;
   if (started_ && nowMs - lastCmdMs_ < gap) {
@@ -86,6 +120,21 @@ bool RigPoller::step(uint32_t nowMs) {
       applyOptimistic(write);
     }
     slot_ = 0;  // releer frecuencia y modo justo después
+    eepromDue_ = extras_.eeprom;  // y VFO/split (A/B o SPLIT cambian lo que hay en EEPROM)
+    started_ = true;
+    lastCmdMs_ = nowMs;
+    return true;
+  }
+
+  if (wantEepromRead(nowMs)) {
+    Query q = nextIsSplit_ ? Query::Split : Query::Vfo;
+    CatResult r = run(q);
+    recordExtra(q, r);
+    nextIsSplit_ = !nextIsSplit_;
+    if (!nextIsSplit_) {
+      eepromDue_ = false;  // leídos los dos
+      lastEepromMs_ = nowMs;
+    }
     started_ = true;
     lastCmdMs_ = nowMs;
     return true;
@@ -96,13 +145,27 @@ bool RigPoller::step(uint32_t nowMs) {
     case kFreq: q = Query::FreqMode; break;
     case kTx: q = Query::TxStatus; break;
     default:
-      // En TX el estado RX no es válido: aprovechar el hueco para refrescar PO/SWR.
-      q = state_.tx.transmitting ? Query::TxStatus : Query::RxStatus;
+      // En TX el estado RX no es válido: aprovechar el hueco para los medidores (o PO/SWR).
+      if (!state_.tx.transmitting) {
+        q = Query::RxStatus;
+      } else if (extras_.txMeters && !state_.metersUnsupported) {
+        q = Query::TxMeters;
+      } else {
+        q = Query::TxStatus;
+      }
       break;
   }
   slot_ = (slot_ + 1) % kScheduleLen;
 
-  recordResult(run(q), nowMs);
+  CatResult r = run(q);
+  if (q == Query::TxMeters) {
+    recordExtra(q, r);
+  } else {
+    recordResult(r, nowMs);
+    if (r != CatResult::Ok) {
+      eepromErrors_ = meterErrors_ = 0;  // falla el enlace, no se puede culpar a las extras
+    }
+  }
   started_ = true;
   lastCmdMs_ = nowMs;
   return true;
@@ -124,6 +187,34 @@ CatResult RigPoller::run(Query q) {
       CatResult r = cat_.readTxStatus(tx);
       if (r == CatResult::Ok) {
         state_.tx = tx;
+        if (!tx.transmitting) {
+          state_.haveMeters = false;
+        }
+      }
+      return r;
+    }
+    case Query::TxMeters: {
+      TxMeters m;
+      CatResult r = cat_.readTxMeters(m);
+      if (r == CatResult::Ok) {
+        state_.meters = m;
+        state_.haveMeters = true;
+      }
+      return r;
+    }
+    case Query::Vfo:
+    case Query::Split: {
+      bool vfo = q == Query::Vfo;
+      uint8_t b;
+      CatResult r = cat_.readEepromByte(vfo ? extras_.layout.vfoAddr : extras_.layout.splitAddr, b);
+      if (r == CatResult::Ok) {
+        if (vfo) {
+          state_.vfoB = (b & 0x01) != 0;
+          state_.haveVfo = true;
+        } else {
+          state_.split = (b & 0x80) != 0;
+          state_.haveSplit = true;
+        }
       }
       return r;
     }

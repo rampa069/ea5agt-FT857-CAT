@@ -34,6 +34,13 @@ MODES = {
 MODE_NAMES = {v: k for k, v in MODES.items()}
 NARROW_BIT = 0x80
 
+# Direcciones de EEPROM (lectura 0xBB) por familia, como en hamlib:
+#   (VFO activo: bit 0 = B, split: bit 7)
+EEPROM_LAYOUT = {
+    "817": (0x55, 0x7A), "818": (0x55, 0x7A),
+    "857": (0x68, 0x8D), "897": (0x68, 0x8D),
+}
+
 # Escenario de demostración: (frecuencia Hz, modo)
 DEMO_CHANNELS = [
     (7_074_000, "USB"),
@@ -103,6 +110,12 @@ class Radio:
     def mode(self, code):
         self.vfo[self.active][1] = code
 
+    def _sync_eeprom(self):
+        """Refleja VFO activo y split en las direcciones de EEPROM del modelo."""
+        vfo_addr, split_addr = EEPROM_LAYOUT[self.model]
+        self.eeprom[vfo_addr] = (self.eeprom[vfo_addr] & 0xFE) | (1 if self.active == "B" else 0)
+        self.eeprom[split_addr] = (self.eeprom[split_addr] & 0x7F) | (0x80 if self.split else 0)
+
     def rx_status(self):
         b = self.s_meter & 0x0F
         if self.disc_off_center:
@@ -140,13 +153,14 @@ class Radio:
                 return bytes([self.rx_status()])
             if op == 0xF7:
                 return bytes([self.tx_status()])
-            if op == 0xBD and self.model in ("817", "818"):
-                # Medidores TX (no documentado, sólo 817/818): [PWR<<4 | ALC] [SWR<<4 | MOD]
+            if op == 0xBD:
+                # Medidores TX (no documentado): en TX [PWR<<4 | ALC] [SWR<<4 | MOD]; en RX un 0xFF
                 if not self.ptt:
-                    return b"\x00\x00"
+                    return b"\xFF"
                 swr = 12 if self.high_swr else 2
                 return bytes([(self.po << 4) | 3, (swr << 4) | 5])
             if op == 0xBB:
+                self._sync_eeprom()
                 addr = ((p[0] << 8) | p[1]) & 0xFFFE
                 return bytes(self.eeprom[addr:addr + 2]).ljust(2, b"\x00")
             if op == 0xBC:

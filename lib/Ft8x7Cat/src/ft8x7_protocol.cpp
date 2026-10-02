@@ -198,6 +198,13 @@ RxStatus decodeRxStatus(uint8_t raw) {
   return s;
 }
 
+TxMeters decodeTxMeters(const uint8_t r[2]) {
+  return TxMeters{static_cast<uint8_t>(r[0] >> 4), static_cast<uint8_t>(r[0] & 0x0F),
+                  static_cast<uint8_t>(r[1] >> 4), static_cast<uint8_t>(r[1] & 0x0F)};
+}
+
+uint8_t pickEepromByte(uint16_t address, const uint8_t response[2]) { return response[address & 1]; }
+
 TxStatus decodeTxStatus(uint8_t raw) {
   TxStatus s;
   s.transmitting = (raw & 0x80) == 0;

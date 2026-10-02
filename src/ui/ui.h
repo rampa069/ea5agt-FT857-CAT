@@ -145,7 +145,7 @@ class Ui {
   ft8x7::RigState last_{};
   struct {
     int linked = -1, freqColor = -1, rawMode = -1, band = -1, split = -1, sqlClar = -1, tx = -1;
-    int meterLevel = -1, meterTx = -1, swr = -1, model = -1, lock = -1;
+    int meterLevel = -1, meterTx = -1, swr = -1, model = -1, lock = -1, vfo = -1, meterInfo = -1;
     const char* link = nullptr;
     uint32_t freqHz = 0;
   } cache_;

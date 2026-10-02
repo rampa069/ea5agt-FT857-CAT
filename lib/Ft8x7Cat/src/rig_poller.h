@@ -19,11 +19,30 @@ struct RigState {
   uint32_t errorCount = 0;
   uint32_t writeCount = 0;
   uint32_t lastOkMs = 0;
+
+  // Lecturas extra (comandos no documentados). have* = false hasta la primera lectura buena.
+  bool haveVfo = false;
+  bool vfoB = false;
+  bool haveSplit = false;
+  bool split = false;     // leído de EEPROM en RX (el bit de 0xF7 tiene polaridad dudosa)
+  bool haveMeters = false;
+  TxMeters meters{};      // sólo transmitiendo
+  bool eepromUnsupported = false;  // la radio no respondió a 0xBB: se dejó de leer
+  bool metersUnsupported = false;  // la radio no respondió a 0xBD en TX
+};
+
+// Qué lecturas extra intentar según el modelo.
+struct PollExtras {
+  bool eeprom = false;
+  EepromLayout layout{};
+  bool txMeters = false;
 };
 
 class RigPoller {
  public:
   static constexpr uint8_t kLinkLossErrors = 3;
+  static constexpr uint8_t kExtraGiveUpErrors = 3;
+  static constexpr uint32_t kExtrasEveryMs = 1000;
   static constexpr size_t kQueueSize = 8;
 
   // gapMs: pausa entre comandos con enlace; retryGapMs: pausa sin enlace (no saturar la radio).
@@ -41,10 +60,15 @@ class RigPoller {
   // al mantener pulsada la sintonía sólo se envía la última frecuencia. False si la cola está llena.
   bool enqueue(const Command& cmd);
 
+  // Configura las lecturas extra (desde la tarea del sondeo). Rehabilita las desactivadas.
+  void setExtras(const PollExtras& extras);
+
  private:
-  enum class Query : uint8_t { FreqMode, TxStatus, RxStatus };
+  enum class Query : uint8_t { FreqMode, TxStatus, RxStatus, TxMeters, Vfo, Split };
 
   CatResult run(Query q);
+  bool wantEepromRead(uint32_t nowMs) const;
+  void recordExtra(Query q, CatResult r);
   bool popWrite(Command& cmd);
   void applyOptimistic(const Command& cmd);
   void recordResult(CatResult r, uint32_t nowMs);
@@ -57,6 +81,13 @@ class RigPoller {
   uint8_t slot_ = 0;
   bool started_ = false;
   uint32_t lastCmdMs_ = 0;
+
+  PollExtras extras_;
+  bool eepromDue_ = false;  // releer VFO/split cuanto antes (tras una escritura)
+  bool nextIsSplit_ = false;
+  uint32_t lastEepromMs_ = 0;
+  uint8_t eepromErrors_ = 0;
+  uint8_t meterErrors_ = 0;
 
   std::mutex queueMutex_;
   Command queue_[kQueueSize];

@@ -61,4 +61,22 @@ CatResult Ft8x7Cat::readEeprom(uint16_t address, uint8_t out[2]) {
   return transact(makeReadEepromCommand(address), out, 2);
 }
 
+CatResult Ft8x7Cat::readEepromByte(uint16_t address, uint8_t& out) {
+  uint8_t pair[2];
+  CatResult r = readEeprom(address, pair);
+  if (r == CatResult::Ok) {
+    out = pickEepromByte(address, pair);
+  }
+  return r;
+}
+
+CatResult Ft8x7Cat::readTxMeters(TxMeters& out) {
+  uint8_t r[2];
+  CatResult res = transact(makeCommand(Opcode::ReadTxMeters), r, 2);
+  if (res == CatResult::Ok) {
+    out = decodeTxMeters(r);
+  }
+  return res;
+}
+
 }  // namespace ft8x7

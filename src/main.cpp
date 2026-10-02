@@ -45,6 +45,7 @@ static std::atomic<uint32_t> pendingBaud{0};
 
 // Configuración de transporte que lee la tarea CAT (copia protegida de los ajustes).
 struct LinkConfig {
+  rigui::RigModel model;
   rigui::Transport transport;
   bool haveDevice;
   rigui::BtDevice device;
@@ -55,6 +56,7 @@ static portMUX_TYPE linkMux = portMUX_INITIALIZER_UNLOCKED;
 
 static void publishLinkConfig(const rigui::Settings& st) {
   portENTER_CRITICAL(&linkMux);
+  linkConfig.model = st.model;
   linkConfig.transport = st.transport;
   linkConfig.haveDevice = st.btHaveDevice;
   linkConfig.device = st.btDevice;
@@ -83,8 +85,20 @@ static void beginCatPort(uint32_t baud) {
 }
 
 // Tarea en el núcleo 0: el sondeo bloquea hasta 200 ms por comando y no debe frenar la UI.
+// Lecturas no documentadas según el modelo (direcciones de EEPROM de hamlib). Si la radio no
+// responde a alguna, el sondeo la desactiva solo.
+static ft8x7::PollExtras extrasFor(rigui::RigModel model) {
+  ft8x7::PollExtras e;
+  e.eeprom = true;
+  e.txMeters = true;
+  bool family817 = model == rigui::RigModel::FT817 || model == rigui::RigModel::FT818;
+  e.layout = family817 ? ft8x7::kEeprom817 : ft8x7::kEeprom857;
+  return e;
+}
+
 static void catTask(void*) {
   rigui::Transport active = rigui::Transport::Cable;
+  int activeModel = -1;
   catPort.setTarget(&uartPort);
   for (;;) {
     uint32_t baud = pendingBaud.exchange(0);
@@ -96,6 +110,10 @@ static void catTask(void*) {
     portENTER_CRITICAL(&linkMux);
     cfg = linkConfig;
     portEXIT_CRITICAL(&linkMux);
+    if (static_cast<int>(cfg.model) != activeModel) {
+      activeModel = static_cast<int>(cfg.model);
+      poller.setExtras(extrasFor(cfg.model));
+    }
     if (cfg.transport != active) {
       active = cfg.transport;
       if (active == rigui::Transport::Bluetooth) {

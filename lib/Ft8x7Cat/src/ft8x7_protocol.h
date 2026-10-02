@@ -27,7 +27,8 @@ enum class Opcode : uint8_t {
   ToggleVfo = 0x81,
   SplitOff = 0x82,
   ClarifierOff = 0x85,
-  ReadEeprom = 0xBB,  // no documentado
+  ReadEeprom = 0xBB,    // no documentado
+  ReadTxMeters = 0xBD,  // no documentado: en TX, 2 bytes con PO/ALC/SWR/MOD
   ReadRxStatus = 0xE7,
   ClarifierOffset = 0xF5,
   ReadTxStatus = 0xF7,
@@ -63,6 +64,22 @@ struct RxStatus {
   bool discriminatorOffCenter;
 };
 
+// Medidores de transmisión (0xBD), 0..15 cada uno. Sólo válidos transmitiendo.
+struct TxMeters {
+  uint8_t power;
+  uint8_t alc;
+  uint8_t swr;
+  uint8_t mod;
+};
+
+// Direcciones de EEPROM (lectura con 0xBB) según la familia de radio, sacadas de hamlib.
+struct EepromLayout {
+  uint16_t vfoAddr;    // bit 0: 0 = VFO A, 1 = VFO B
+  uint16_t splitAddr;  // bit 7: split activo
+};
+constexpr EepromLayout kEeprom817 = {0x0055, 0x007A};  // FT-817/818
+constexpr EepromLayout kEeprom857 = {0x0068, 0x008D};  // FT-857/897
+
 struct TxStatus {
   // La radio responde 0xFF en recepción; en TX el bit 7 vale 0 (criterio de hamlib).
   bool transmitting;
@@ -95,6 +112,10 @@ bool decodeSetFrequency(const Command& cmd, uint32_t& hz);
 // 4 bytes BCD big-endian en pasos de 10 Hz (43 97 00 00 = 439.700,00 MHz).
 // Devuelve false si algún nibble no es un dígito decimal.
 bool decodeBcdFrequency(const uint8_t bcd[4], uint32_t& hz);
+
+TxMeters decodeTxMeters(const uint8_t response[2]);
+// La radio devuelve 2 bytes desde la dirección par pedida: elige el byte de `address`.
+uint8_t pickEepromByte(uint16_t address, const uint8_t response[2]);
 
 bool decodeFreqMode(const uint8_t response[kFreqModeResponseLength], FreqMode& out);
 Mode decodeMode(uint8_t raw);

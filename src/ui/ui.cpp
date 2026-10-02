@@ -131,6 +131,12 @@ void Ui::update(const RigState& s, uint32_t nowMs) {
     show(Screen::Main);
   }
 
+  // Split leído de la radio: manda sobre lo que el display creía haber enviado.
+  if (s.linked && s.haveSplit && split_ != s.split) {
+    split_ = s.split;
+    if (screen_ == Screen::Menu) refreshButtons();
+  }
+
   if (toastText_[0] && static_cast<int32_t>(nowMs - toastUntilMs_) >= 0) {
     toastText_[0] = '\0';
     if (toastShown_) {
@@ -658,19 +664,24 @@ void Ui::drawMainDynamic(const RigState& s, bool force) {
 
   // Cabecera: modelo, LOCK y estado del enlace
   int model = static_cast<int>(settings_.model);
-  if (force || cache_.model != model || cache_.lock != lock_) {
+  int vfo = live && s.haveVfo ? (s.vfoB ? 2 : 1) : 0;
+  if (force || cache_.model != model || cache_.lock != lock_ || cache_.vfo != vfo) {
     tft_.fillRect(0, 0, 230, HEADER_H, th_.header);
     tft_.setTextColor(th_.text, th_.header);
     tft_.setTextDatum(ML_DATUM);
     tft_.setTextPadding(0);
     tft_.drawString(rigui::modelName(settings_.model), 6, HEADER_H / 2, 2);
+    if (vfo) {
+      tft_.setTextColor(th_.text, th_.header);
+      tft_.drawString(vfo == 2 ? "VFO B" : "VFO A", 96, HEADER_H / 2, 2);
+    }
     if (lock_) {
       tft_.setTextColor(th_.accent, th_.header);
-      tft_.setTextDatum(MC_DATUM);
-      tft_.drawString("LOCK", 160, HEADER_H / 2, 2);
+      tft_.drawString("LOCK", 170, HEADER_H / 2, 2);
     }
     cache_.model = model;
     cache_.lock = lock_;
+    cache_.vfo = vfo;
   }
   const char* link = linkLabel(live);
   if (linkChanged || link != cache_.link) {
@@ -732,7 +743,8 @@ void Ui::drawMainDynamic(const RigState& s, bool force) {
     tft_.setTextDatum(MC_DATUM);
     tft_.drawString(label, 211, y + 10, 2);
   };
-  int split = live && (split_ || (tx && s.tx.split));
+  // Con EEPROM, el split real; si no, lo último que envió el display (el bit de 0xF7 es dudoso).
+  int split = live && (s.haveSplit ? s.split : split_);
   if (force || split != cache_.split) {
     flag(ROW_Y, "SPLIT", split, th_.flagSplit);
     cache_.split = split;
@@ -758,10 +770,12 @@ void Ui::drawMainDynamic(const RigState& s, bool force) {
   // Medidor
   int level = !live ? 0 : (tx ? s.tx.poMeter : s.rx.sMeter);
   int swr = tx && s.tx.highSwr;
+  int meterInfo = tx && s.haveMeters ? (1 + s.meters.swr * 16 + s.meters.alc) : 0;
   if (force || cache_.meterTx != tx) {
     drawMeterScale(tx);
   }
-  if (force || level != cache_.meterLevel || tx != cache_.meterTx || swr != cache_.swr) {
+  if (force || level != cache_.meterLevel || tx != cache_.meterTx || swr != cache_.swr ||
+      meterInfo != cache_.meterInfo) {
     tft_.fillRect(0, METER_TITLE_Y, W, 16, th_.bg);
     tft_.setTextPadding(0);
     tft_.setTextColor(th_.textDim, th_.bg);
@@ -771,6 +785,11 @@ void Ui::drawMainDynamic(const RigState& s, bool force) {
       tft_.setTextColor(th_.warn, th_.bg);
       tft_.setTextDatum(TC_DATUM);
       tft_.drawString("HI SWR", W / 2, METER_TITLE_Y, 2);
+    } else if (meterInfo) {
+      snprintf(buf, sizeof(buf), "SWR %u   ALC %u", s.meters.swr, s.meters.alc);
+      tft_.setTextColor(th_.textDim, th_.bg);
+      tft_.setTextDatum(TC_DATUM);
+      tft_.drawString(buf, W / 2, METER_TITLE_Y, 2);
     }
     if (!live) snprintf(buf, sizeof(buf), "--");
     else if (tx) snprintf(buf, sizeof(buf), "%u", s.tx.poMeter);
@@ -787,6 +806,7 @@ void Ui::drawMainDynamic(const RigState& s, bool force) {
     cache_.meterLevel = level;
     cache_.meterTx = tx;
     cache_.swr = swr;
+    cache_.meterInfo = meterInfo;
   }
 }
 
@@ -849,7 +869,7 @@ void Ui::drawDiag(const RigState& s) {
   struct Row {
     const char* label;
     char value[40];
-  } rows[7];
+  } rows[8];
   snprintf(rows[0].value, sizeof(rows[0].value), "%s", s.linked ? "OK" : "SIN ENLACE");
   snprintf(rows[1].value, sizeof(rows[1].value), "%lu", static_cast<unsigned long>(s.okCount));
   snprintf(rows[2].value, sizeof(rows[2].value), "%lu", static_cast<unsigned long>(s.errorCount));
@@ -861,9 +881,12 @@ void Ui::drawDiag(const RigState& s) {
     snprintf(rows[4].value, sizeof(rows[4].value), "Cable %lu 8N2", static_cast<unsigned long>(settings_.baud));
   }
   snprintf(rows[5].value, sizeof(rows[5].value), "%s", rigui::modelName(settings_.model));
-  snprintf(rows[6].value, sizeof(rows[6].value), "%s", __DATE__);
-  const char* labels[7] = {"Enlace", "Lecturas OK", "Errores", "Escrituras", "Conexion", "Radio", "Firmware"};
-  for (int i = 0; i < 7; ++i) {
+  snprintf(rows[6].value, sizeof(rows[6].value), "EEPROM %s, medidores %s",
+           s.eepromUnsupported ? "no" : (s.haveVfo ? "si" : "?"),
+           s.metersUnsupported ? "no" : (s.haveMeters ? "si" : "?"));
+  snprintf(rows[7].value, sizeof(rows[7].value), "%s", __DATE__);
+  const char* labels[8] = {"Enlace", "Lecturas OK", "Errores", "Escrituras", "Conexion", "Radio", "Extras", "Firmware"};
+  for (int i = 0; i < 8; ++i) {
     int16_t y = 48 + i * 24;
     tft_.setTextDatum(TL_DATUM);
     tft_.setTextColor(th_.textDim, th_.bg);

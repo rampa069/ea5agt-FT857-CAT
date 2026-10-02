@@ -41,12 +41,22 @@ class RadioTest(unittest.TestCase):
         self.r.split = True
         self.assertEqual(self.r.handle(bytes([0, 0, 0, 0, 0xF7])), bytes([0x47]))
 
-    def test_tx_metering_817_818_only(self):
+    def test_tx_metering(self):
         r = sim.Radio("818")
         r.ptt, r.po = True, 9
         self.assertEqual(r.handle(bytes([0, 0, 0, 0, 0xBD])), bytes([0x93, 0x25]))
-        self.r.ptt = True
-        self.assertEqual(self.r.handle(bytes([0, 0, 0, 0, 0xBD])), b"")
+        r.ptt = False
+        self.assertEqual(r.handle(bytes([0, 0, 0, 0, 0xBD])), b"\xFF")  # en RX sólo un byte
+
+    def test_eeprom_reflects_vfo_and_split(self):
+        for model, vfo_addr, split_addr in (("857", 0x68, 0x8D), ("817", 0x55, 0x7A)):
+            r = sim.Radio(model)
+            r.handle(bytes([0, 0, 0, 0, 0x81]))  # A/B -> VFO B
+            r.handle(bytes([0, 0, 0, 0, 0x02]))  # split ON
+            pair = r.handle(bytes([vfo_addr >> 8, vfo_addr & 0xFF, 0, 0, 0xBB]))
+            self.assertEqual(pair[vfo_addr & 1] & 0x01, 1, model)
+            pair = r.handle(bytes([split_addr >> 8, split_addr & 0xFF, 0, 0, 0xBB]))
+            self.assertEqual(pair[split_addr & 1] & 0x80, 0x80, model)
 
     def test_ptt_reply(self):
         self.assertEqual(self.r.handle(bytes([0, 0, 0, 0, 0x08])), b"\x00")
@@ -84,6 +94,7 @@ class RadioTest(unittest.TestCase):
     def test_eeprom_read_and_write_ignored(self):
         self.r.eeprom[0x78:0x7A] = b"\x12\x34"
         self.assertEqual(self.r.handle(bytes([0x00, 0x79, 0, 0, 0xBB])), b"\x12\x34")
+        self.assertEqual(self.r.handle(bytes([0x00, 0x78, 0xAA, 0xBB, 0xBC])), b"")
         self.assertEqual(self.r.handle(bytes([0x00, 0x78, 0xAA, 0xBB, 0xBC])), b"")
         self.assertEqual(bytes(self.r.eeprom[0x78:0x7A]), b"\x12\x34")
 

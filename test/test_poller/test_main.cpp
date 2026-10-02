@@ -13,6 +13,10 @@ class FakeRadio : public CatPort {
   uint8_t freqMode[5] = {0x01, 0x40, 0x74, 0x00, 0x01};  // 14.074 MHz USB
   uint8_t rx = 0x05;
   uint8_t tx = 0xFF;
+  uint8_t eeprom[256] = {};
+  bool eepromSupported = true;
+  uint8_t meters[2] = {0x93, 0x25};  // PO 9, ALC 3, SWR 2, MOD 5
+  bool metersSupported = true;
   uint8_t ops[64] = {};
   size_t opCount = 0;
 
@@ -20,25 +24,45 @@ class FakeRadio : public CatPort {
     if (len == kCommandLength && opCount < sizeof(ops)) {
       ops[opCount++] = data[4];
     }
-    pending_ = data[4];
+    memcpy(pending_, data, kCommandLength);
   }
 
   size_t read(uint8_t* data, size_t len, uint32_t) override {
     if (!online) {
       return 0;
     }
-    switch (pending_) {
+    switch (pending_[4]) {
       case 0x03: memcpy(data, freqMode, len); return len;
       case 0xE7: data[0] = rx; return 1;
       case 0xF7: data[0] = tx; return 1;
+      case 0xBB: {
+        if (!eepromSupported) return 0;
+        uint8_t addr = pending_[1];
+        data[0] = eeprom[addr];
+        data[1] = eeprom[addr + 1];
+        return 2;
+      }
+      case 0xBD:
+        if (!metersSupported || (tx & 0x80)) {  // en RX (o sin soporte) sólo 1 byte
+          data[0] = 0xFF;
+          return 1;
+        }
+        memcpy(data, meters, 2);
+        return 2;
       default: return 0;
     }
   }
 
   void discardInput() override {}
 
+  size_t count(uint8_t op) const {
+    size_t n = 0;
+    for (size_t i = 0; i < opCount; ++i) n += ops[i] == op;
+    return n;
+  }
+
  private:
-  uint8_t pending_ = 0;
+  uint8_t pending_[kCommandLength] = {};
 };
 
 void setUp() {}
@@ -192,6 +216,119 @@ static void test_switching_port_follows_target() {
   TEST_ASSERT_EQUAL(1, cable.opCount);
 }
 
+static PollExtras extras857() {
+  PollExtras e;
+  e.eeprom = true;
+  e.layout = kEeprom857;
+  e.txMeters = true;
+  return e;
+}
+
+static void test_eeprom_reads_vfo_and_split_in_rx() {
+  FakeRadio radio;
+  radio.eeprom[0x68] = 0x01;  // VFO B
+  radio.eeprom[0x8D] = 0x80;  // split ON
+  Ft8x7Cat cat(radio);
+  RigPoller poller(cat);
+  poller.setExtras(extras857());
+  uint32_t now = 0;
+  runSteps(poller, now, 8);
+
+  const RigState& s = poller.state();
+  TEST_ASSERT_TRUE(s.haveVfo);
+  TEST_ASSERT_TRUE(s.vfoB);
+  TEST_ASSERT_TRUE(s.haveSplit);
+  TEST_ASSERT_TRUE(s.split);
+  TEST_ASSERT_EQUAL(2, radio.count(0xBB));  // una de cada, no más hasta pasado el intervalo
+  TEST_ASSERT_EQUAL_HEX8(0x03, radio.ops[0]);  // la frecuencia siempre primero
+}
+
+static void test_eeprom_reread_after_write_and_periodic() {
+  FakeRadio radio;
+  Ft8x7Cat cat(radio);
+  RigPoller poller(cat);
+  poller.setExtras(extras857());
+  uint32_t now = 0;
+  runSteps(poller, now, 6, 50);
+  TEST_ASSERT_FALSE(poller.state().vfoB);
+  size_t before = radio.count(0xBB);
+
+  radio.eeprom[0x68] = 0x01;  // el usuario pulsa A/B
+  poller.enqueue(makeToggleVfo());
+  runSteps(poller, now, 5, 50);
+  TEST_ASSERT_TRUE(poller.state().vfoB);
+  TEST_ASSERT_EQUAL(before + 2, radio.count(0xBB));
+
+  runSteps(poller, now, 30, 50);  // 1,5 s: al menos una relectura periódica
+  TEST_ASSERT_TRUE(radio.count(0xBB) >= before + 4);
+}
+
+static void test_eeprom_unsupported_disables_without_link_loss() {
+  FakeRadio radio;
+  radio.eepromSupported = false;  // algunos FT-857 no responden a 0xBB
+  Ft8x7Cat cat(radio);
+  RigPoller poller(cat);
+  poller.setExtras(extras857());
+  uint32_t now = 0;
+  runSteps(poller, now, 40, 100);
+  TEST_ASSERT_TRUE(poller.state().linked);
+  TEST_ASSERT_TRUE(poller.state().eepromUnsupported);
+  TEST_ASSERT_FALSE(poller.state().haveVfo);
+  TEST_ASSERT_EQUAL(RigPoller::kExtraGiveUpErrors, radio.count(0xBB));
+  TEST_ASSERT_EQUAL_UINT32(0, poller.state().errorCount);
+}
+
+static void test_meters_read_while_transmitting() {
+  FakeRadio radio;
+  radio.tx = 0x47;  // TX
+  Ft8x7Cat cat(radio);
+  RigPoller poller(cat);
+  poller.setExtras(extras857());
+  uint32_t now = 0;
+  runSteps(poller, now, 5);
+  const RigState& s = poller.state();
+  TEST_ASSERT_TRUE(s.haveMeters);
+  TEST_ASSERT_EQUAL_UINT8(9, s.meters.power);
+  TEST_ASSERT_EQUAL_UINT8(3, s.meters.alc);
+  TEST_ASSERT_EQUAL_UINT8(2, s.meters.swr);
+  TEST_ASSERT_EQUAL_UINT8(5, s.meters.mod);
+  size_t eepromReads = radio.count(0xBB);  // las iniciales, antes de saber que transmite
+  runSteps(poller, now, 30);               // 3 s transmitiendo
+  TEST_ASSERT_EQUAL(eepromReads, radio.count(0xBB));  // en TX no se lee la EEPROM
+
+  radio.tx = 0xFF;  // vuelve a RX: los medidores dejan de valer
+  runSteps(poller, now, 3);
+  TEST_ASSERT_FALSE(poller.state().haveMeters);
+}
+
+static void test_meters_unsupported_fall_back_to_tx_status() {
+  FakeRadio radio;
+  radio.tx = 0x47;
+  radio.metersSupported = false;
+  Ft8x7Cat cat(radio);
+  RigPoller poller(cat);
+  poller.setExtras(extras857());
+  uint32_t now = 0;
+  runSteps(poller, now, 20);
+  TEST_ASSERT_TRUE(poller.state().metersUnsupported);
+  TEST_ASSERT_TRUE(poller.state().linked);
+  TEST_ASSERT_EQUAL(RigPoller::kExtraGiveUpErrors, radio.count(0xBD));
+  TEST_ASSERT_EQUAL_UINT8(7, poller.state().tx.poMeter);  // sigue el PO del estado TX
+}
+
+static void test_eeprom_byte_pick_and_meter_decode() {
+  const uint8_t pair[2] = {0x11, 0x22};
+  TEST_ASSERT_EQUAL_HEX8(0x11, pickEepromByte(0x68, pair));
+  TEST_ASSERT_EQUAL_HEX8(0x22, pickEepromByte(0x55, pair));
+  const uint8_t m[2] = {0xA1, 0x3F};
+  TxMeters t = decodeTxMeters(m);
+  TEST_ASSERT_EQUAL_UINT8(10, t.power);
+  TEST_ASSERT_EQUAL_UINT8(1, t.alc);
+  TEST_ASSERT_EQUAL_UINT8(3, t.swr);
+  TEST_ASSERT_EQUAL_UINT8(15, t.mod);
+  TEST_ASSERT_EQUAL_HEX8(0x54, makeReadEepromCommand(0x55).bytes[1]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_schedule_order_in_receive);
@@ -203,5 +340,11 @@ int main() {
   RUN_TEST(test_set_frequency_coalesces_and_updates_state);
   RUN_TEST(test_queue_full);
   RUN_TEST(test_switching_port_follows_target);
+  RUN_TEST(test_eeprom_reads_vfo_and_split_in_rx);
+  RUN_TEST(test_eeprom_reread_after_write_and_periodic);
+  RUN_TEST(test_eeprom_unsupported_disables_without_link_loss);
+  RUN_TEST(test_meters_read_while_transmitting);
+  RUN_TEST(test_meters_unsupported_fall_back_to_tx_status);
+  RUN_TEST(test_eeprom_byte_pick_and_meter_decode);
   return UNITY_END();
 }

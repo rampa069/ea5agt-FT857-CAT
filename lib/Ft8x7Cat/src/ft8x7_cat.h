@@ -29,6 +29,8 @@ class Ft8x7Cat {
   CatResult readRxStatus(RxStatus& out);
   CatResult readTxStatus(TxStatus& out);
   CatResult readEeprom(uint16_t address, uint8_t out[2]);
+  CatResult readEepromByte(uint16_t address, uint8_t& out);
+  CatResult readTxMeters(TxMeters& out);  // sólo transmitiendo (en RX la radio responde 1 byte)
 
   // Envía un comando de escritura. Según el firmware la radio responde un byte de confirmación
   // o nada; se espera hasta ackTimeoutMs para que no se mezcle con la respuesta siguiente.

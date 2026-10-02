@@ -66,6 +66,21 @@ Trama `[P1 P2 P3 P4 OPCODE]`. Frecuencias en BCD.
 Lectura (sondeo continuo): `03` frecuencia y modo, `E7` estado RX, `F7` estado TX.
 Prohibido: `BC` (escritura de EEPROM).
 
+## Lecturas no documentadas
+
+Sacadas de hamlib (`rigs/yaesu/ft817.c`, `ft857.c`, `ft897.c`). Si la radio no responde a alguna
+tres veces seguidas mientras las lecturas normales sí, el display deja de pedirla (algunos FT-857
+no responden a `BB`) sin dar el enlace por perdido. Diagnóstico → «Extras» muestra el resultado.
+
+| Dato | Trama | FT-817/818 | FT-857/897 | Cuándo |
+|---|---|---|---|---|
+| VFO activo | `HH LL 00 00 BB` | EEPROM `0x55`, bit 0 (1 = B) | EEPROM `0x68`, bit 0 | En RX, cada segundo y tras A/B o SPLIT |
+| Split | `HH LL 00 00 BB` | EEPROM `0x7A`, bit 7 | EEPROM `0x8D`, bit 7 | Igual |
+| Medidores TX | `00 00 00 00 BD` | 2 bytes: `[PWR·16+ALC] [SWR·16+MOD]` | Igual (en RX responde un solo `FF`) | Sólo transmitiendo |
+
+`BB` se pide en dirección par y la radio devuelve 2 bytes (`HH LL` y el siguiente). El split ya no
+se toma del bit 5 de `F7`, cuya polaridad no coincide entre el manual y hamlib.
+
 ## Bandas
 
 160m 1,840 LSB · 80m 3,700 LSB · 60m 5,3515 USB (no en FT-817 original) · 40m 7,100 LSB · 30m 10,120 CW ·
