@@ -70,23 +70,32 @@
     <li>Conecta la placa con un <strong>cable USB de datos</strong> (muchos cables sólo cargan).</li>
     <li>Pulsa <strong>Instalar</strong> en tu variante y elige el puerto (CH340, <code>usbserial</code> o <code>COMx</code>).</li>
   </ol>
+  <p class="note"><strong>¿Colores raros</strong> (fondo blanco, amarillo azulado)? No reinstales:
+    MENU → Ajustes → Pantalla → Colores <em>Normal</em> / <em>Invertidos</em>.</p>
   <p class="note">Al actualizar se conservan los ajustes, la calibración del táctil y el emparejamiento Bluetooth.
     Si el instalador pregunta, marca <em>borrar</em> sólo en la primera instalación o si algo falla.</p>
 
   <div class="cards" id="variants">
     <div class="card main">
-      <h3>CYD (ESP32-2432S028R, un micro-USB) <span class="tag">recomendado</span></h3>
-      <p>Firmware normal: CAT por cable (IO22/IO27) o por Bluetooth.</p>
-      <esp-web-install-button manifest="firmware/manifest-cyd.json">
+      <h3>CYD con micro-USB + USB-C <span class="tag">probada</span></h3>
+      <p>Placa con dos conectores USB (pantalla ILI9341 con colores invertidos de fábrica).</p>
+      <esp-web-install-button manifest="firmware/manifest-cyd2usb.json">
         <button slot="activate" class="btn">Instalar</button>
         <span slot="unsupported">Tu navegador no permite instalar: usa Chrome o Edge en un ordenador.</span>
         <span slot="not-allowed">Abre esta página por HTTPS para poder instalar.</span>
       </esp-web-install-button>
     </div>
     <div class="card">
-      <h3>CYD con dos USB (pantalla ST7789)</h3>
-      <p>Variante con micro-USB + USB-C. Sin probar todavía en placa.</p>
-      <esp-web-install-button manifest="firmware/manifest-cyd2usb.json">
+      <h3>CYD con un solo micro-USB</h3>
+      <p>La placa original (pantalla ILI9341, colores normales).</p>
+      <esp-web-install-button manifest="firmware/manifest-cyd.json">
+        <button slot="activate" class="btn">Instalar</button>
+      </esp-web-install-button>
+    </div>
+    <div class="card">
+      <h3>CYD con pantalla ST7789</h3>
+      <p>Sólo si con las anteriores la imagen sale desplazada, cortada o con ruido.</p>
+      <esp-web-install-button manifest="firmware/manifest-cyd-st7789.json">
         <button slot="activate" class="btn">Instalar</button></esp-web-install-button>
     </div>
     <div class="card">

@@ -21,10 +21,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 # Entornos publicados en la web: (entorno, título, descripción)
 VARIANTS = [
-    ("cyd", "CYD (ESP32-2432S028R, un micro-USB)",
-     "Firmware normal: CAT por cable (IO22/IO27) o por Bluetooth."),
-    ("cyd2usb", "CYD con dos USB (pantalla ST7789)",
-     "Variante con micro-USB + USB-C. Sin probar en placa."),
+    ("cyd2usb", "CYD con micro-USB + USB-C", "Pantalla ILI9341, colores invertidos de fábrica."),
+    ("cyd", "CYD con un solo micro-USB", "Pantalla ILI9341, colores normales."),
+    ("cyd-st7789", "CYD con pantalla ST7789", "Si con las otras la imagen sale desplazada o con ruido."),
     ("cyd-usbcat", "Pruebas sin radio (CAT por el USB)",
      "El CAT va por el propio cable USB para usar el simulador del ordenador. No conectar a una radio."),
 ]

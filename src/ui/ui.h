@@ -49,7 +49,7 @@ class Ui {
     SetMode, SetBand, Key, KeyDel, KeyClear, KeyOk, Split, OpenClar, OpenRepeater, Lock,
     OpenSettings, OpenDiag, ClarToggle, ClarDelta, RptShift, RptOffset, ToneMode, ToneValue,
     SetModel, SetBaud, Brightness, Calibrate,
-    SetTransport, OpenDisplay, OpenBluetooth, BtScan, BtSelect, BtPin, BtForget,
+    SetTransport, OpenDisplay, OpenBluetooth, BtScan, BtSelect, BtPin, BtForget, SetInvert,
   };
   enum class Style : uint8_t { Normal, On, Disabled, Custom };
 

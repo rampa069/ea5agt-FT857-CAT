@@ -70,6 +70,10 @@ constexpr uint32_t kLazySaveMs = 30000;  // la memoria de bandas cambia a menudo
 
 static rigui::TouchFilter touchFilter;
 
+#ifndef DEFAULT_INVERT
+#define DEFAULT_INVERT 0
+#endif
+
 static void beginCatPort(uint32_t baud) {
 #if CAT_OVER_USB
   uartPort.begin(baud, -1, -1);  // pines por defecto del UART0 (GPIO3/GPIO1)
@@ -124,18 +128,30 @@ static ft8x7::RigState snapshot() {
   return s;
 }
 
-static void applyBrightness() { analogWrite(TFT_BL, settings.brightness * 255 / 100); }
+static void applyDisplay() {
+  analogWrite(TFT_BL, settings.brightness * 255 / 100);
+  tft.invertDisplay(settings.invertColors);
+}
 
 static void loadSettings() {
   const rigui::TouchCal defaultTouch{TOUCH_RAW_X_MIN, TOUCH_RAW_X_MAX, TOUCH_RAW_Y_MIN, TOUCH_RAW_Y_MAX,
                                      TOUCH_SWAP_XY};
   prefs.begin("cydcat", false);
-  bool ok = prefs.getBytesLength("cfg") == sizeof(settings) &&
-            prefs.getBytes("cfg", &settings, sizeof(settings)) == sizeof(settings) && settings.valid();
-  if (!ok) {
-    settings.setDefaults(defaultTouch);
+  size_t len = prefs.getBytesLength("cfg");
+  const char* how = "por defecto";
+  if (len > 0 && len <= sizeof(settings) && prefs.getBytes("cfg", &settings, len) == len) {
+    if (len == sizeof(settings) && settings.valid()) {
+      how = "cargados de NVS";
+    } else if (settings.migrate(len, DEFAULT_INVERT)) {
+      how = "migrados de una version anterior";
+      prefs.putBytes("cfg", &settings, sizeof(settings));
+    } else {
+      settings.setDefaults(defaultTouch, DEFAULT_INVERT);
+    }
+  } else {
+    settings.setDefaults(defaultTouch, DEFAULT_INVERT);
   }
-  LOG("Ajustes %s\n", ok ? "cargados de NVS" : "por defecto");
+  LOG("Ajustes %s\n", how);
 }
 
 static void saveSettings() {
@@ -164,7 +180,7 @@ class Host : public UiHost {
   void settingsChanged(bool urgent) override {
     if (urgent) {
       publishLinkConfig(settings);
-      applyBrightness();
+      applyDisplay();
       if (settings.baud != appliedBaud_) {
         appliedBaud_ = settings.baud;
         pendingBaud = settings.baud;
@@ -231,7 +247,7 @@ void setup() {
 
   tft.init();
   tft.setRotation(1);  // apaisado 320x240
-  applyBrightness();
+  applyDisplay();
 
   touchSpi.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
   touch.begin(touchSpi);

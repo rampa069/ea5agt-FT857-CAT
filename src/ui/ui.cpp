@@ -299,9 +299,11 @@ void Ui::layout() {
       add(192, 194, 122, 42, Action::OpenDisplay);
       break;
     case Screen::Display:
-      add(68, 60, 60, 44, Action::Brightness, -10);
-      add(246, 60, 68, 44, Action::Brightness, 10);
-      add(68, 120, 246, 44, Action::Calibrate);
+      add(68, 46, 60, 44, Action::Brightness, -10);
+      add(246, 46, 68, 44, Action::Brightness, 10);
+      add(68, 100, 120, 44, Action::SetInvert, 0);
+      add(192, 100, 122, 44, Action::SetInvert, 1);
+      add(68, 160, 246, 44, Action::Calibrate);
       break;
     case Screen::Bluetooth:
       for (size_t i = 0; i < btResultCount_; ++i) add(6, 66 + i * 44, 308, 40, Action::BtSelect, i);
@@ -356,6 +358,7 @@ void Ui::buttonLabel(const Button& b, char* buf, size_t len) const {
     case Action::Brightness: t = b.arg < 0 ? "-" : "+"; break;
     case Action::Calibrate: t = "Calibrar tactil"; break;
     case Action::SetTransport: t = b.arg ? "Bluetooth" : "Cable"; break;
+    case Action::SetInvert: t = b.arg ? "Invertidos" : "Normal"; break;
     case Action::OpenBluetooth: t = "Emparejar"; break;
     case Action::OpenDisplay: t = "Pantalla"; break;
     case Action::BtScan: t = "Buscar"; break;
@@ -400,6 +403,7 @@ Ui::Style Ui::buttonStyle(const Button& b) const {
       return rigui::kBaudRates[b.arg] == settings_.baud ? Style::On : Style::Normal;
     case Action::SetTransport:
       return static_cast<int>(settings_.transport) == b.arg ? Style::On : Style::Normal;
+    case Action::SetInvert: return settings_.invertColors == (b.arg != 0) ? Style::On : Style::Normal;
     case Action::BtScan:
       return bt_.state == rigui::BtState::Scanning || bt_.state == rigui::BtState::Connecting ? Style::Disabled
                                                                                                : Style::Normal;
@@ -587,10 +591,11 @@ void Ui::redraw(const RigState& s) {
       drawLabel(6, 166, "Baudios");
       break;
     case Screen::Display: {
-      drawLabel(6, 82, "Brillo");
+      drawLabel(6, 68, "Brillo");
+      drawLabel(6, 122, "Colores");
       char buf[8];
       snprintf(buf, sizeof(buf), "%u %%", settings_.brightness);
-      drawField(132, 60, 110, 44, buf, th_.text, 4);
+      drawField(132, 46, 110, 44, buf, th_.text, 4);
       break;
     }
     case Screen::Bluetooth:
@@ -1146,9 +1151,14 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
       settings_.brightness = static_cast<uint8_t>(v < 10 ? 10 : (v > 100 ? 100 : v));
       host_.settingsChanged(true);
       snprintf(buf, sizeof(buf), "%u %%", settings_.brightness);
-      drawField(132, 60, 110, 44, buf, th_.text, 4);
+      drawField(132, 46, 110, 44, buf, th_.text, 4);
       break;
     }
+    case Action::SetInvert:
+      settings_.invertColors = b.arg != 0;
+      host_.settingsChanged(true);
+      refreshButtons();
+      break;
     case Action::Calibrate:
       calibStep_ = 0;
       show(Screen::Calibrate);

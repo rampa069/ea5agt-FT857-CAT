@@ -124,7 +124,8 @@ static void test_model_names() {
 
 static void test_settings_defaults_and_validation() {
   Settings st;
-  st.setDefaults(TouchCal{185, 3816, 323, 3887, false});
+  st.setDefaults(TouchCal{185, 3816, 323, 3887, false}, true);
+  TEST_ASSERT_TRUE(st.invertColors);
   TEST_ASSERT_TRUE(st.valid());
   TEST_ASSERT_EQUAL(Transport::Cable, st.transport);
   TEST_ASSERT_FALSE(st.btHaveDevice);
@@ -139,6 +140,31 @@ static void test_settings_defaults_and_validation() {
   bad = st;
   memset(bad.btPin, 'x', sizeof(bad.btPin));  // sin terminador
   TEST_ASSERT_FALSE(bad.valid());
+}
+
+static void test_settings_migrate_from_v2() {
+  Settings saved;
+  saved.setDefaults(TouchCal{185, 3816, 323, 3887, false}, false);
+  saved.transport = Transport::Bluetooth;
+  saved.btHaveDevice = true;
+  saved.btDevice = BtDevice{{0x98, 0xD3, 0x31, 0xF5, 0xA2, 0x10}, "HC-06", -50};
+  saved.version = 2;
+
+  // Simula leer de NVS sólo los bytes que guardaba la versión 2.
+  size_t stored = Settings::sizeOfVersion(2);
+  Settings loaded;
+  memset(&loaded, 0xAB, sizeof(loaded));
+  memcpy(&loaded, &saved, stored);
+  TEST_ASSERT_TRUE(loaded.migrate(stored, true));
+  TEST_ASSERT_EQUAL(Settings::kVersion, loaded.version);
+  TEST_ASSERT_TRUE(loaded.invertColors);
+  TEST_ASSERT_TRUE(loaded.btHaveDevice);
+  TEST_ASSERT_EQUAL_STRING("HC-06", loaded.btDevice.name);
+  TEST_ASSERT_EQUAL(Transport::Bluetooth, loaded.transport);
+
+  Settings junk;
+  memset(&junk, 0, sizeof(junk));
+  TEST_ASSERT_FALSE(junk.migrate(stored, true));  // versión 0: no se aprovecha
 }
 
 static void test_bt_address_format() {
@@ -163,6 +189,7 @@ int main() {
   RUN_TEST(test_wrap_index);
   RUN_TEST(test_model_names);
   RUN_TEST(test_settings_defaults_and_validation);
+  RUN_TEST(test_settings_migrate_from_v2);
   RUN_TEST(test_bt_address_format);
   return UNITY_END();
 }

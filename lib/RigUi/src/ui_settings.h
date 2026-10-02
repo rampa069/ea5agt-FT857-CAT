@@ -14,7 +14,7 @@ constexpr uint32_t kBaudRates[] = {4800, 9600, 38400};
 constexpr size_t kBaudCount = 3;
 
 struct Settings {
-  static constexpr uint16_t kVersion = 2;
+  static constexpr uint16_t kVersion = 3;
 
   uint16_t version;
   RigModel model;
@@ -32,9 +32,16 @@ struct Settings {
   bool btHaveDevice;
   BtDevice btDevice;
   char btPin[9];  // PIN clásico (HC-05/HC-06: 1234)
+  // Pantalla (añadido en la versión 3: los campos nuevos siempre al final, ver migrate())
+  bool invertColors;
 
-  void setDefaults(const TouchCal& defaultTouch);
+  void setDefaults(const TouchCal& defaultTouch, bool defaultInvert);
   bool valid() const;  // tras cargar de NVS
+
+  // Ajustes guardados por una versión anterior: `stored` bytes leídos al principio de la
+  // estructura. Completa los campos nuevos y devuelve true si se pudieron aprovechar.
+  bool migrate(size_t stored, bool defaultInvert);
+  static size_t sizeOfVersion(uint16_t version);
 };
 
 }  // namespace rigui

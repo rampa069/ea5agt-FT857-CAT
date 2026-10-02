@@ -1,10 +1,15 @@
 #include "ui_settings.h"
 
+#include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 namespace rigui {
 
-void Settings::setDefaults(const TouchCal& defaultTouch) {
+void Settings::setDefaults(const TouchCal& defaultTouch, bool defaultInvert) {
+  // Todo a cero, relleno incluido: los arrays de texto quedan terminados y lo que se guarda
+  // en NVS es determinista.
+  memset(this, 0, sizeof(*this));
   version = kVersion;
   model = RigModel::FT857;
   baud = 4800;
@@ -19,6 +24,24 @@ void Settings::setDefaults(const TouchCal& defaultTouch) {
   btHaveDevice = false;
   btDevice = BtDevice{};
   snprintf(btPin, sizeof(btPin), "1234");
+  invertColors = defaultInvert;
+}
+
+size_t Settings::sizeOfVersion(uint16_t v) {
+  switch (v) {
+    case 2: return offsetof(Settings, invertColors);  // v2 terminaba en btPin
+    case kVersion: return sizeof(Settings);
+    default: return 0;
+  }
+}
+
+bool Settings::migrate(size_t stored, bool defaultInvert) {
+  if (version == 2 && stored >= sizeOfVersion(2)) {
+    invertColors = defaultInvert;
+    version = kVersion;
+    return valid();
+  }
+  return false;
 }
 
 bool Settings::valid() const {

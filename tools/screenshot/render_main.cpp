@@ -101,7 +101,7 @@ static RigState rigState(uint32_t hz, Mode mode, uint8_t rx, uint8_t tx) {
 
 int main(int argc, char** argv) {
   outDir = argc > 1 ? argv[1] : ".";
-  settings.setDefaults(rigui::TouchCal{185, 3816, 323, 3887, false});
+  settings.setDefaults(rigui::TouchCal{185, 3816, 323, 3887, false}, true);
   fakeMillis = now;
 
   RigState rx = rigState(14074000, Mode::USB, 0x07, 0xFF);

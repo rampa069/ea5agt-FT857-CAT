@@ -42,7 +42,7 @@ jobs:
         run: python -m unittest discover -s tools
 
       - name: Compilar firmware
-        run: pio run -e cyd -e cyd2usb -e cyd-usbcat
+        run: pio run -e cyd -e cyd2usb -e cyd-st7789 -e cyd-usbcat
 
       - name: Preparar la web de instalación
         run: |

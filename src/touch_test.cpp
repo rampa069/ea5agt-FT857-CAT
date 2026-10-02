@@ -205,6 +205,9 @@ void setup() {
   Serial.begin(115200);
   tft.init();
   tft.setRotation(1);
+#ifdef DEFAULT_INVERT
+  tft.invertDisplay(DEFAULT_INVERT);
+#endif
   touchSpi.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
   touch.begin(touchSpi);
   touch.setRotation(1);

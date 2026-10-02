@@ -38,11 +38,15 @@ Protocolo: tramas de 5 bytes `[P1 P2 P3 P4 OPCODE]`. Lectura continua de `03` (f
 Con [PlatformIO](https://platformio.org/):
 
 ```bash
-pio run -e cyd -t upload            # placa con un micro-USB (ILI9341)
-pio run -e cyd2usb -t upload        # placa con micro-USB + USB-C (ST7789, sin probar)
+pio run -e cyd2usb -t upload        # placa con micro-USB + USB-C (ILI9341 invertida; probada)
+pio run -e cyd -t upload            # placa con un solo micro-USB (ILI9341)
+pio run -e cyd-st7789 -t upload     # placas con controlador ST7789
 pio run -e cyd-usbcat -t upload     # pruebas: CAT por el USB, para el simulador
 pio run -e touchtest -t upload -t monitor   # calibración del táctil por consola
 ```
+
+Las variantes sólo cambian el controlador y el valor inicial de la inversión de colores; si los
+colores salen al revés se corrige en la placa: Ajustes → Pantalla → Colores.
 
 Si la subida falla con `Invalid head of packet`, el CH340 no aguanta 921600: ya está a 460800 en `platformio.ini`.
 

@@ -35,6 +35,7 @@ class TFT_eSPI {
   int16_t width() const { return W; }
   int16_t height() const { return H; }
   void setRotation(uint8_t) {}
+  void invertDisplay(bool) {}
 
   void drawPixel(int32_t x, int32_t y, uint16_t c) {
     if (x >= 0 && y >= 0 && x < W && y < H) fb[y * W + x] = c;

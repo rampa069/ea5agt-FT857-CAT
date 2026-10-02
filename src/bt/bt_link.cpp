@@ -13,6 +13,7 @@ constexpr int kFallbackChannel = 1;  // si el equipo no anuncia SPP por SDP (p. 
 
 BtLink* gLink = nullptr;  // los callbacks de BluetoothSerial son funciones sin contexto
 std::atomic<uint32_t> gConfirmCode{0};
+std::atomic<bool> gAuthFailed{false};
 
 }  // namespace
 
@@ -64,7 +65,10 @@ void BtLink::start(const char* localName) {
     gConfirmCode = code;
     if (gLink) gLink->bt_.confirmReply(true);
   });
-  bt_.onAuthComplete([](boolean) { gConfirmCode = 0; });
+  bt_.onAuthComplete([](boolean ok) {
+    gConfirmCode = 0;
+    if (!ok) gAuthFailed = true;
+  });
   started_ = bt_.begin(localName, true);
   attempted_ = false;
   setState(started_ ? rigui::BtState::Idle : rigui::BtState::Failed);
@@ -187,10 +191,16 @@ bool BtLink::doConnect(const rigui::BtDevice& device, const char* pin) {
   bt_.setPin(pin);  // PIN clásico de los HC-05/HC-06
   uint8_t addr[6];
   memcpy(addr, device.addr, 6);
+  gAuthFailed = false;
   // Primero buscando el servicio SPP por SDP (adaptadores reales); si no, canal fijo.
   // connected() cubre el caso visto en pruebas: el emparejamiento acaba justo después del timeout.
   bool ok = bt_.connect(addr) || bt_.connected() || bt_.connect(addr, kFallbackChannel);
   gConfirmCode = 0;
+  if (!ok && gAuthFailed) {
+    // El otro equipo ya no reconoce nuestra clave (lo desemparejaron o cambió el PIN): borrarla
+    // para que el siguiente intento empareje de nuevo en vez de reintentar con una clave inválida.
+    bt_.unpairDevice(addr);
+  }
   setState(ok ? rigui::BtState::Connected : rigui::BtState::Failed);
   return ok;
 }
