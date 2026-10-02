@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maqueta CYD CAT</title>
+<style>
+  :root {
+    --page: #15171a; --panel: #1f2226; --text: #e6e6e6; --muted: #8a9099; --accent: #f5c518;
+    --pcb: #e9b70f;
+    /* Colores RGB565 de TFT_eSPI */
+    --black: #000; --white: #fff; --yellow: #ffff00; --navy: #000080; --dgreen: #008000;
+    --red: #ff0000; --orange: #ffb400; --green: #00ff00; --cyan: #00ffff; --sky: #87ceeb;
+    --dgrey: #808080; --lgrey: #d3d3d3; --dim: #282828; --hdr: #10141c; --btn: #1c2838; --btnhi: #2f4f7f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
+  main { display: flex; flex-wrap: wrap; gap: 24px; padding: 20px 16px; justify-content: center; align-items: flex-start; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 12px; font-size: 13px; }
+
+  .board { background: var(--pcb); padding: 18px 18px 30px; border-radius: 10px; box-shadow: 0 8px 30px #0008; position: relative; }
+  .board::after { content: "ESP32-2432S028R"; position: absolute; bottom: 8px; left: 18px; font: 600 11px monospace; color: #6b5205; }
+  .screenwrap { background: #000; overflow: hidden; border: 3px solid #222; }
+  #screen { width: 320px; height: 240px; position: relative; transform-origin: 0 0; background: var(--black);
+            font-family: Arial, Helvetica, sans-serif; color: var(--white); user-select: none; overflow: hidden; }
+  #screen .el { position: absolute; display: flex; align-items: center; justify-content: center; white-space: nowrap; }
+  #screen [data-a] { cursor: pointer; }
+  #screen.zones [data-a] { outline: 1px dashed #ff00ff; outline-offset: -1px; }
+  #screen.zones [data-a].small { outline-color: #ff4040; outline-width: 2px; }
+  .f2 { font-size: 13px; } .f4 { font-size: 22px; } .f1 { font: 8px monospace; }
+  .btn { background: var(--btn); border-radius: 5px; color: var(--white); }
+  .btn.on { background: var(--btnhi); box-shadow: inset 0 0 0 2px var(--cyan); }
+  .btn.dis { color: #555; background: #141414; }
+  .btn:active { filter: brightness(1.6); }
+  .toast { background: #000c; border: 1px solid var(--accent); color: var(--accent); border-radius: 6px; z-index: 5; }
+  .timer { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--accent); opacity: .6; }
+
+  aside { background: var(--panel); border-radius: 10px; padding: 14px 16px; width: 360px; max-width: 100%; }
+  aside h2 { font-size: 14px; margin: 14px 0 6px; color: var(--accent); }
+  aside label { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  aside button, aside select { background: #2b3036; color: var(--text); border: 1px solid #444; border-radius: 6px; padding: 6px 10px; font: inherit; }
+  aside button:active { background: #44505c; }
+  #ptt { width: 100%; padding: 10px; font-weight: 700; }
+  #ptt.on { background: #a01818; border-color: #f33; }
+  #log { font: 12px/1.5 ui-monospace, Menlo, monospace; background: #111; border-radius: 6px; padding: 8px; height: 240px; overflow: auto; }
+  #log div { white-space: nowrap; }
+  #log .hex { color: var(--accent); }
+  #log .w { color: #ff8080; }
+  .notes { color: var(--muted); font-size: 12px; }
+  .notes li { margin: 3px 0; }
+  @media (max-width: 900px) { aside { width: 100%; } }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>Maqueta táctil · Display CAT FT-817/818/857</h1>
+    <p class="sub">Pantalla 320×240 a escala. Haz clic como si fuera el dedo. Coordenadas = píxeles reales de la CYD.</p>
+    <div class="board"><div class="screenwrap" id="wrap"><div id="screen"></div></div></div>
+  </section>
+
+  <aside>
+    <h2>Simulación (no está en la placa)</h2>
+    <label>Modelo <select id="model"><option>817</option><option>818</option><option selected>857</option><option>897</option></select></label>
+    <label><input type="checkbox" id="link" checked> Enlace CAT</label>
+    <label><input type="checkbox" id="zones"> Mostrar zonas táctiles <span class="notes">(rojo = &lt; 40 px)</span></label>
+    <label>Zoom <select id="zoom"><option>2</option><option selected>2.5</option><option>3</option></select></label>
+    <button id="ptt">PTT del micro (mantener)</button>
+    <label><input type="checkbox" id="swr"> SWR alta al transmitir</label>
+
+    <h2>Comandos CAT enviados</h2>
+    <div id="log"></div>
+
+    <h2>Notas de diseño</h2>
+    <ul class="notes">
+      <li>Botones ≥ 44 px de alto: la pantalla es resistiva y se usa con el dedo.</li>
+      <li>Cada subpantalla vuelve a la principal a los 10 s sin tocar (línea amarilla inferior).</li>
+      <li>CAT no tiene comando de banda: el display recuerda la última frecuencia y modo de cada banda.</li>
+      <li>Nunca PTT desde la pantalla.</li>
+    </ul>
+  </aside>
+</main>
+
+<script>
+"use strict";
+
+// ---------- Datos de la radio ----------
+const MODES = [["LSB",0x00],["USB",0x01],["CW",0x02],["CWR",0x03],["AM",0x04],["FM",0x08],["DIG",0x0A],["PKT",0x0C],["WFM",0x06]];
+const BANDS = [
+  ["160m",1840000,"LSB"],["80m",3700000,"LSB"],["60m",5351500,"USB"],["40m",7100000,"LSB"],
+  ["30m",10120000,"CW"],["20m",14200000,"USB"],["17m",18120000,"USB"],["15m",21200000,"USB"],
+  ["12m",24940000,"USB"],["10m",28500000,"USB"],["6m",50150000,"USB"],["2m",145500000,"FM"],
+  ["70cm",433500000,"FM"],["AIR",125000000,"AM"],["FM-BC",98000000,"WFM"],
+];
+const BAND_LIMITS = { "160m":[1.8,2], "80m":[3.5,4], "60m":[5.25,5.45], "40m":[7,7.3], "30m":[10.1,10.15], "20m":[14,14.35],
+  "17m":[18.068,18.168], "15m":[21,21.45], "12m":[24.89,24.99], "10m":[28,29.7], "6m":[50,54], "2m":[144,148],
+  "70cm":[430,450], "AIR":[118,137], "FM-BC":[76,108] };
+const RX_RANGES = [[0.1,56],[76,108],[118,164],[420,470]]; // MHz, igual en 817/818/857/897
+const CTCSS = [67.0,69.3,71.9,74.4,77.0,79.7,82.5,85.4,88.5,91.5,94.8,97.4,100.0,103.5,107.2,110.9,114.8,118.8,123.0,127.3,131.8,136.5,141.3,146.2,151.4,156.7,159.8,162.2,165.5,167.9,171.3,173.8,177.3,179.9,183.5,186.2,189.9,192.8,196.6,199.5,203.5,206.5,210.7,218.1,225.7,229.1,233.6,241.8,250.3,254.1];
+const STEPS = [[10,"10Hz"],[100,"100Hz"],[1000,"1k"],[10000,"10k"],[100000,"100k"],[1000000,"1M"]];
+const RETURN_MS = 10000;
+
+const S = {
+  screen: "main", model: "857", baud: 4800, bright: 80, link: true,
+  vfo: { A: { hz: 14074000, mode: "USB" }, B: { hz: 7030000, mode: "CW" } }, active: "A",
+  split: false, lock: false, clarOn: false, clarHz: 0,
+  rptShift: "SIMPLEX", rptOffsetHz: 600000, toneMode: "OFF", ctcss: 8,
+  tx: false, swr: false, s: 5, po: 0, sql: false,
+  stepIdx: 2, keypad: "", keypadErr: "", bandMem: {}, ok: 0, err: 0,
+  lastTouch: Date.now(), toast: null,
+};
+const cur = () => S.vfo[S.active];
+const bandOf = hz => BANDS.find(([b]) => { const [lo, hi] = BAND_LIMITS[b]; return hz >= lo * 1e6 && hz <= hi * 1e6; });
+const has60m = () => S.model !== "817"; // 817 original sin 60m; 817ND EE.UU. sí (pendiente de verificar)
+
+// ---------- Comandos CAT ----------
+const hex = b => b.map(x => x.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+const bcd = (n, digits) => { const s = String(n).padStart(digits, "0"); const out = []; for (let i = 0; i < digits; i += 2) out.push(parseInt(s.slice(i, i + 2), 16)); return out; };
+function cat(bytes, text) {
+  const log = document.getElementById("log");
+  const line = document.createElement("div");
+  if (!S.link) { line.innerHTML = `<span class="w">✗ sin enlace</span> ${text}`; }
+  else { line.innerHTML = `<span class="hex">${hex(bytes)}</span>  ${text}`; S.ok++; }
+  log.prepend(line);
+  return S.link;
+}
+const catFreq = hz => cat([...bcd(Math.round(hz / 10), 8), 0x01], `fijar frecuencia ${fmtFreq(hz)}`);
+const catMode = m => cat([MODES.find(x => x[0] === m)[1], 0, 0, 0, 0x07], `modo ${m}`);
+
+// ---------- Acciones ----------
+function toast(text) { S.toast = { text, until: Date.now() + 1300 }; }
+function go(screen) { S.screen = screen; S.keypad = ""; S.keypadErr = ""; }
+function needLink() { if (!S.link) { toast("Sin enlace CAT"); return false; } return true; }
+
+function setFreq(hz) {
+  if (!RX_RANGES.some(([lo, hi]) => hz >= lo * 1e6 && hz <= hi * 1e6)) { toast("Fuera de rango"); return false; }
+  if (catFreq(hz)) { cur().hz = hz; const b = bandOf(hz); if (b) S.bandMem[b[0]] = { hz, mode: cur().mode }; }
+  return true;
+}
+
+const actions = {
+  "open:freq": () => go("freq"), "open:mode": () => go("mode"), "open:band": () => go("band"),
+  "open:menu": () => go("menu"), back: () => go("main"),
+  "tune:-": () => { if (needLink()) setFreq(cur().hz - STEPS[S.stepIdx][0]); },
+  "tune:+": () => { if (needLink()) setFreq(cur().hz + STEPS[S.stepIdx][0]); },
+  step: () => { S.stepIdx = (S.stepIdx + 1) % STEPS.length; },
+  ab: () => { if (needLink() && cat([0, 0, 0, 0, 0x81], "conmutar VFO A/B")) { S.active = S.active === "A" ? "B" : "A"; toast("VFO-" + S.active); } },
+  mode: m => { if (needLink() && catMode(m)) { cur().mode = m; toast("Modo " + m); go("main"); } },
+  band: b => {
+    if (!needLink()) return;
+    const def = BANDS.find(x => x[0] === b);
+    const mem = S.bandMem[b] || { hz: def[1], mode: def[2] };
+    if (setFreq(mem.hz)) { if (cur().mode !== mem.mode && catMode(mem.mode)) cur().mode = mem.mode; toast("Banda " + b); go("main"); }
+  },
+  key: k => {
+    S.keypadErr = "";
+    if (k === "del") S.keypad = S.keypad.slice(0, -1);
+    else if (k === "clr") S.keypad = "";
+    else if (k === "." && S.keypad.includes(".")) return;
+    else if (S.keypad.length < 10) S.keypad += k;
+  },
+  "key:ok": () => {
+    const mhz = parseFloat(S.keypad);
+    if (!S.keypad || isNaN(mhz)) { S.keypadErr = "Escribe la frecuencia en MHz"; return; }
+    const hz = Math.round(mhz * 1e5) * 10;
+    if (!RX_RANGES.some(([lo, hi]) => mhz >= lo && mhz <= hi)) { S.keypadErr = "Fuera de rango de la radio"; return; }
+    if (needLink() && setFreq(hz)) { toast(fmtFreq(hz) + " MHz"); go("main"); }
+  },
+  split: () => { if (needLink() && cat([0, 0, 0, 0, S.split ? 0x82 : 0x02], S.split ? "split OFF" : "split ON")) S.split = !S.split; },
+  lock: () => { if (needLink() && cat([0, 0, 0, 0, S.lock ? 0x80 : 0x00], S.lock ? "lock OFF" : "lock ON")) S.lock = !S.lock; },
+  "open:clar": () => go("clar"), "open:rpt": () => { if (cur().mode === "FM") go("rpt"); else toast("Sólo en FM"); },
+  "open:settings": () => go("settings"), "open:diag": () => go("diag"),
+  clar: () => { if (needLink() && cat([0, 0, 0, 0, S.clarOn ? 0x85 : 0x05], S.clarOn ? "clarificador OFF" : "clarificador ON")) S.clarOn = !S.clarOn; },
+  "clar:d": d => {
+    if (!needLink()) return;
+    const v = d === "0" ? 0 : Math.max(-9990, Math.min(9990, S.clarHz + Number(d)));
+    const a = Math.abs(v) / 10; // 12 34 = 12,34 kHz -> unidades de 10 Hz
+    if (cat([v < 0 ? 0x01 : 0x00, 0, ...bcd(a, 4), 0xF5], `clarificador ${fmtClar(v)}`)) S.clarHz = v;
+  },
+  rpt: s => { const p = { "-": 0x09, "+": 0x49, SIMPLEX: 0x89 }[s]; if (needLink() && cat([p, 0, 0, 0, 0x09], "repetidor " + s)) S.rptShift = s; },
+  "rptoff:d": d => { if (!needLink()) return; const v = Math.max(0, Math.min(99990000, S.rptOffsetHz + Number(d))); if (cat([...bcd(v, 8), 0xF9], `desplazamiento ${(v / 1e6).toFixed(3)} MHz`)) S.rptOffsetHz = v; },
+  tone: m => { const p = { OFF: 0x8A, ENC: 0x4A, TSQ: 0x2A, DCS: 0x0A }[m]; if (needLink() && cat([p, 0, 0, 0, 0x0A], "tono " + m)) S.toneMode = m; },
+  "ctcss:d": d => {
+    if (!needLink()) return;
+    const i = (S.ctcss + Number(d) + CTCSS.length) % CTCSS.length;
+    if (cat([...bcd(Math.round(CTCSS[i] * 10), 4), 0, 0, 0x0B], `CTCSS ${CTCSS[i].toFixed(1)} Hz`)) S.ctcss = i;
+  },
+  model: m => { S.model = m; document.getElementById("model").value = m; },
+  baud: b => { S.baud = Number(b); toast("CAT a " + b); },
+  "bright:d": d => { S.bright = Math.max(10, Math.min(100, S.bright + Number(d))); },
+  calib: () => toast("Calibración: toca las 4 cruces"),
+};
+
+// ---------- Dibujo ----------
+const fmtFreq = hz => { const t = Math.round(hz / 10); return `${Math.floor(t / 100000)}.${String(Math.floor(t / 100) % 1000).padStart(3, "0")}.${String(t % 100).padStart(2, "0")}`; };
+const fmtClar = v => (v < 0 ? "-" : "+") + (Math.abs(v) / 1000).toFixed(2) + " kHz";
+const sLabel = s => s <= 9 ? "S" + s : "S9+" + (s - 9) * 10;
+
+function el(x, y, w, h, html, opts = {}) {
+  const st = [`left:${x}px`, `top:${y}px`, `width:${w}px`, `height:${h}px`];
+  if (opts.bg) st.push(`background:${opts.bg}`);
+  if (opts.fg) st.push(`color:${opts.fg}`);
+  if (opts.r) st.push(`border-radius:${opts.r}px`);
+  if (opts.border) st.push(`border:1px solid ${opts.border}`);
+  if (opts.justify) st.push(`justify-content:${opts.justify}`);
+  if (opts.style) st.push(opts.style);
+  const small = opts.a && h < 40 ? " small" : "";
+  const a = opts.a ? ` data-a="${opts.a}"${opts.arg !== undefined ? ` data-arg="${opts.arg}"` : ""}` : "";
+  return `<div class="el ${opts.cls || ""}${small}"${a} style="${st.join(";")}">${html}</div>`;
+}
+const button = (x, y, w, h, label, a, arg, extra = "") => el(x, y, w, h, label, { a, arg, cls: "btn f2 " + extra });
+
+// Dígitos de 7 segmentos parecidos a la fuente 7 de TFT_eSPI (28×48 por dígito).
+const SEGS = { 0: "abcdef", 1: "bc", 2: "abged", 3: "abgcd", 4: "fgbc", 5: "afgcd", 6: "afgedc", 7: "abc", 8: "abcdefg", 9: "abcdfg", "-": "g" };
+function sevenSeg(text, color) {
+  const W = 28, H = 48, T = 6, DOT = 12, G = (H - T) / 2;
+  const hw = W - 2 * T + 2, vh = G - T + 2;
+  const r = { a: [T - 1, 0, hw, T], g: [T - 1, G, hw, T], d: [T - 1, H - T, hw, T],
+              f: [0, T - 1, T, vh], b: [W - T, T - 1, T, vh], e: [0, G + T - 1, T, vh], c: [W - T, G + T - 1, T, vh] };
+  let x = 0, parts = [];
+  for (const ch of text) {
+    if (ch === ".") { parts.push(`<rect x="${x + 3}" y="${H - T}" width="${T}" height="${T}" rx="1" fill="${color}"/>`); x += DOT; continue; }
+    for (const s of SEGS[ch] || "") { const [sx, sy, sw, sh] = r[s]; parts.push(`<rect x="${x + sx}" y="${sy}" width="${sw}" height="${sh}" rx="2" fill="${color}"/>`); }
+    x += W + 4;
+  }
+  return { svg: `<svg width="${x}" height="${H}" viewBox="0 0 ${x} ${H}">${parts.join("")}</svg>`, width: x };
+}
+
+function header(title) {
+  return el(0, 0, 320, 40, "", { bg: "var(--hdr)" }) +
+    button(4, 2, 84, 36, "◀ Volver", "back") +
+    el(96, 0, 220, 40, title, { cls: "f4", justify: "flex-start", style: "font-size:18px" });
+}
+
+function drawMain() {
+  const v = cur(), live = S.link, tx = live && S.tx;
+  let h = el(0, 0, 320, 20, `&nbsp;FT-${S.model}`, { bg: "var(--hdr)", cls: "f2", justify: "flex-start" });
+  h += el(124, 0, 72, 20, `VFO-${S.active}${S.lock ? " 🔒" : ""}`, { cls: "f2", fg: "var(--lgrey)" });
+  h += el(238, 2, 78, 16, live ? "CAT OK" : "NO LINK", { bg: live ? "var(--dgreen)" : "var(--red)", r: 4, cls: "f2" });
+
+  const seg = sevenSeg(fmtFreq(v.hz), live ? "var(--yellow)" : "var(--dgrey)");
+  h += el(0, 22, 320, 56, `<div style="position:absolute;right:10px;top:4px">${seg.svg}</div>`, { a: "open:freq", style: "display:block" });
+  h += el(250, 76, 64, 12, "MHz", { cls: "f2", fg: "var(--dgrey)", justify: "flex-end", style: "font-size:11px" });
+
+  const band = bandOf(v.hz);
+  const dimBox = live ? "var(--navy)" : "#202030";
+  h += el(4, 90, 92, 44, v.mode, { a: "open:mode", bg: dimBox, r: 6, cls: "f4" });
+  h += el(100, 90, 76, 44, band ? band[0] : "GEN", { a: "open:band", bg: dimBox, r: 6, cls: "f4", style: "font-size:20px" });
+  const flag = (y, label, on, col) => el(182, y, 58, 20, label, { cls: "f2", r: 3, bg: on ? col : "transparent", fg: on ? "#000" : "#444", border: on ? col : "#333", style: "font-size:11px" });
+  h += flag(90, "SPLIT", live && S.split, "var(--cyan)");
+  h += flag(114, S.clarOn ? "CLAR" : "SQL", live && (S.clarOn || (!tx && S.sql)), S.clarOn ? "var(--orange)" : "var(--sky)");
+  h += el(246, 90, 70, 44, tx ? "TX" : "RX", { bg: !live ? "#333" : tx ? "var(--red)" : "var(--dgreen)", r: 6, cls: "f4" });
+
+  const level = !live ? 0 : tx ? S.po : S.s;
+  h += el(8, 138, 40, 14, tx ? "PO" : "S", { cls: "f2", fg: "var(--lgrey)", justify: "flex-start" });
+  if (tx && S.swr) h += el(110, 138, 100, 14, "HI SWR", { cls: "f2", fg: "var(--red)" });
+  h += el(232, 138, 80, 14, !live ? "--" : tx ? String(S.po) : sLabel(S.s), { cls: "f2", justify: "flex-end" });
+  for (let i = 0; i < 15; i++) {
+    const col = i >= level ? "var(--dim)" : tx ? (i < 10 ? "var(--orange)" : "var(--red)") : (i < 9 ? "var(--green)" : "var(--red)");
+    h += el(40 + i * 18, 154, 16, 18, "", { bg: col });
+  }
+  const marks = tx ? [[0, "0"], [5, "5"], [10, "10"], [15, "15"]] : [[1, "1"], [3, "3"], [5, "5"], [7, "7"], [9, "9"], [11, "+20"], [13, "+40"], [15, "+60"]];
+  for (const [lv, lab] of marks) {
+    const cx = tx ? (lv === 0 ? 40 : 40 + (lv - 1) * 18 + 16) : 40 + (lv - 1) * 18 + 8;
+    h += el(cx - 16, 173, 32, 12, lab, { cls: "f2", fg: "var(--dgrey)", style: "font-size:10px" });
+  }
+
+  // Barra inferior de botones (44 px de alto).
+  const [, stepLabel] = STEPS[S.stepIdx];
+  h += button(4, 192, 60, 44, "◀", "tune:-", undefined, "f4");
+  h += button(68, 192, 60, 44, `<div style="text-align:center;line-height:1.1"><div style="font-size:9px;color:var(--lgrey)">PASO</div>${stepLabel}</div>`, "step");
+  h += button(132, 192, 60, 44, "▶", "tune:+", undefined, "f4");
+  h += button(196, 192, 58, 44, "A/B", "ab");
+  h += button(258, 192, 58, 44, "MENU", "open:menu");
+  return h;
+}
+
+function drawMode() {
+  let h = header("Modo");
+  MODES.forEach(([m], i) => {
+    const x = 6 + (i % 3) * 104, y = 46 + Math.floor(i / 3) * 64;
+    h += button(x, y, 100, 58, m, "mode", m, "f4" + (cur().mode === m ? " on" : ""));
+  });
+  return h;
+}
+
+function drawBand() {
+  let h = header("Banda");
+  const curBand = bandOf(cur().hz);
+  BANDS.forEach(([b], i) => {
+    const x = 4 + (i % 4) * 79, y = 44 + Math.floor(i / 4) * 49;
+    const dis = b === "60m" && !has60m();
+    h += button(x, y, 75, 45, b, dis ? "" : "band", b, (curBand && curBand[0] === b ? "on" : "") + (dis ? " dis" : ""));
+  });
+  return h;
+}
+
+function drawFreq() {
+  let h = header("Frecuencia (MHz)");
+  h += el(6, 44, 308, 32, (S.keypad || `<span style="color:#555">${fmtFreq(cur().hz)}</span>`) + "<span style='color:var(--accent)'>▏</span>",
+          { bg: "#111", r: 4, cls: "f4", fg: "var(--yellow)", justify: "flex-end", style: "padding-right:8px" });
+  if (S.keypadErr) h += el(6, 76, 308, 12, S.keypadErr, { cls: "f2", fg: "var(--red)", style: "font-size:10px" });
+  const keys = [["1", "2", "3", "⌫"], ["4", "5", "6", "C"], ["7", "8", "9", "."], ["0", "OK"]];
+  keys.forEach((row, r) => row.forEach((k, c) => {
+    const y = 90 + r * 37, x = 4 + c * 79;
+    if (k === "OK") { h += button(x, y, 154, 34, "OK ✓", "key:ok", undefined, "f4 on"); return; }
+    const arg = k === "⌫" ? "del" : k === "C" ? "clr" : k;
+    h += button(x, y, 75, 34, k, "key", arg, "f4");
+  }));
+  return h;
+}
+
+function drawMenu() {
+  let h = header("Menú");
+  const fm = cur().mode === "FM";
+  const items = [
+    [`SPLIT ${S.split ? "ON" : "OFF"}`, "split", S.split], ["Clarificador", "open:clar", S.clarOn],
+    ["Repetidor / tono", fm ? "open:rpt" : "", false, !fm], [`LOCK ${S.lock ? "ON" : "OFF"}`, "lock", S.lock],
+    ["Ajustes", "open:settings"], ["Diagnóstico", "open:diag"],
+  ];
+  items.forEach(([label, a, on, dis], i) => {
+    const x = 6 + (i % 2) * 156, y = 46 + Math.floor(i / 2) * 64;
+    h += button(x, y, 152, 58, label, a, undefined, (on ? "on" : "") + (dis ? " dis" : ""));
+  });
+  return h;
+}
+
+function drawClar() {
+  let h = header("Clarificador");
+  h += button(6, 48, 100, 44, S.clarOn ? "ON" : "OFF", "clar", undefined, S.clarOn ? "on f4" : "f4");
+  h += el(112, 48, 202, 44, fmtClar(S.clarHz), { cls: "f4", fg: "var(--orange)", bg: "#111", r: 4 });
+  [["-100", "−100"], ["-10", "−10"], ["0", "0"], ["10", "+10"], ["100", "+100"]].forEach(([d, l], i) =>
+    h += button(6 + i * 62, 104, 58, 50, l, "clar:d", d, "f4"));
+  h += el(6, 164, 308, 30, "Hz por toque · rango ±9,99 kHz", { cls: "f2", fg: "var(--dgrey)" });
+  return h;
+}
+
+function drawRpt() {
+  let h = header("Repetidor / tono");
+  h += el(6, 44, 60, 40, "Despl.", { cls: "f2", justify: "flex-start" });
+  ["-", "SIMPLEX", "+"].forEach((s, i) => h += button(68 + i * 82, 44, 78, 40, s === "SIMPLEX" ? "SIMPLEX" : s, "rpt", s, S.rptShift === s ? "on" : ""));
+  h += el(6, 88, 60, 40, "Offset", { cls: "f2", justify: "flex-start" });
+  h += button(68, 88, 50, 40, "◀", "rptoff:d", "-100000", "f4");
+  h += el(122, 88, 138, 40, (S.rptOffsetHz / 1e6).toFixed(3) + " MHz", { cls: "f2", bg: "#111", r: 4, style: "font-size:16px" });
+  h += button(264, 88, 50, 40, "▶", "rptoff:d", "100000", "f4");
+  h += el(6, 132, 60, 40, "Tono", { cls: "f2", justify: "flex-start" });
+  ["OFF", "ENC", "TSQ", "DCS"].forEach((m, i) => h += button(68 + i * 62, 132, 58, 40, m, "tone", m, S.toneMode === m ? "on" : ""));
+  h += el(6, 176, 60, 44, "CTCSS", { cls: "f2", justify: "flex-start" });
+  h += button(68, 176, 50, 44, "◀", "ctcss:d", "-1", "f4");
+  h += el(122, 176, 138, 44, CTCSS[S.ctcss].toFixed(1) + " Hz", { cls: "f2", bg: "#111", r: 4, style: "font-size:16px" });
+  h += button(264, 176, 50, 44, "▶", "ctcss:d", "1", "f4");
+  return h;
+}
+
+function drawSettings() {
+  let h = header("Ajustes");
+  h += el(6, 44, 60, 44, "Radio", { cls: "f2", justify: "flex-start" });
+  ["817", "818", "857", "897"].forEach((m, i) => h += button(68 + i * 62, 44, 58, 44, m, "model", m, S.model === m ? "on" : ""));
+  h += el(6, 94, 60, 44, "CAT", { cls: "f2", justify: "flex-start" });
+  [4800, 9600, 38400].forEach((b, i) => h += button(68 + i * 82, 94, 78, 44, String(b), "baud", b, S.baud === b ? "on" : ""));
+  h += el(6, 144, 60, 44, "Brillo", { cls: "f2", justify: "flex-start" });
+  h += button(68, 144, 60, 44, "−", "bright:d", "-10", "f4");
+  h += el(132, 144, 110, 44, S.bright + " %", { cls: "f4", bg: "#111", r: 4 });
+  h += button(246, 144, 68, 44, "+", "bright:d", "10", "f4");
+  h += button(68, 194, 246, 42, "Calibrar pantalla táctil", "calib");
+  return h;
+}
+
+function drawDiag() {
+  let h = header("Diagnóstico");
+  const rows = [["Enlace", S.link ? "OK" : "SIN ENLACE"], ["Comandos OK", S.ok], ["Errores", S.err], ["Puerto", `UART2 IO27/IO22 ${S.baud} 8N2`], ["Modelo", "FT-" + S.model]];
+  rows.forEach(([k, v], i) => {
+    h += el(10, 50 + i * 26, 120, 22, k, { cls: "f2", fg: "var(--lgrey)", justify: "flex-start" });
+    h += el(130, 50 + i * 26, 184, 22, String(v), { cls: "f2", justify: "flex-start" });
+  });
+  return h;
+}
+
+const SCREENS = { main: drawMain, mode: drawMode, band: drawBand, freq: drawFreq, menu: drawMenu, clar: drawClar, rpt: drawRpt, settings: drawSettings, diag: drawDiag };
+
+function render() {
+  const scr = document.getElementById("screen");
+  let h = SCREENS[S.screen]();
+  if (S.screen !== "main") {
+    const left = Math.max(0, 1 - (Date.now() - S.lastTouch) / RETURN_MS);
+    h += `<div class="timer" style="width:${left * 320}px"></div>`;
+  }
+  if (S.toast && Date.now() < S.toast.until) h += el(60, 100, 200, 34, S.toast.text, { cls: "toast f2", style: "font-size:15px" });
+  scr.innerHTML = h;
+  scr.style.filter = `brightness(${0.4 + S.bright / 166})`;
+}
+
+// ---------- Eventos ----------
+let repeat = null;
+document.getElementById("screen").addEventListener("pointerdown", e => {
+  S.lastTouch = Date.now();
+  const t = e.target.closest("[data-a]");
+  if (!t || !t.dataset.a) return;
+  const run = () => { actions[t.dataset.a]?.(t.dataset.arg); render(); };
+  run();
+  // Mantener pulsado ◀ ▶ repite (funciona bien también en táctil resistivo).
+  if (t.dataset.a.startsWith("tune:")) {
+    repeat = setTimeout(function tick() { run(); repeat = setTimeout(tick, 120); }, 450);
+  }
+});
+window.addEventListener("pointerup", () => { clearTimeout(repeat); repeat = null; });
+
+const $ = id => document.getElementById(id);
+$("model").onchange = e => { S.model = e.target.value; render(); };
+$("link").onchange = e => { S.link = e.target.checked; if (!S.link) S.err++; render(); };
+$("zones").onchange = e => { $("screen").classList.toggle("zones", e.target.checked); };
+$("swr").onchange = e => { S.swr = e.target.checked; };
+function setZoom() {
+  const z = Number($("zoom").value);
+  $("screen").style.transform = `scale(${z})`;
+  $("wrap").style.width = 320 * z + "px"; $("wrap").style.height = 240 * z + "px";
+}
+$("zoom").onchange = setZoom;
+const ptt = on => { S.tx = on; $("ptt").classList.toggle("on", on); if (!on) S.po = 0; render(); };
+$("ptt").addEventListener("pointerdown", () => ptt(true));
+$("ptt").addEventListener("pointerup", () => ptt(false));
+$("ptt").addEventListener("pointerleave", () => S.tx && ptt(false));
+
+// Animación: S-meter y potencia, retorno automático a la pantalla principal.
+setInterval(() => {
+  if (S.tx) S.po = Math.min(15, Math.max(3, S.po + (Math.random() * 4 - 1.5) | 0));
+  else { S.s = Math.min(15, Math.max(0, S.s + Math.round(Math.random() * 4 - 2))); S.sql = cur().mode === "FM" && S.s < 2; }
+  if (S.screen !== "main" && Date.now() - S.lastTouch > RETURN_MS) go("main");
+  render();
+}, 250);
+
+// mockup.html#band, #mode, #freq, ... abre esa pantalla (útil para capturas); #zones muestra zonas.
+for (const part of location.hash.slice(1).split(",")) {
+  if (SCREENS[part]) S.screen = part;
+  if (part === "zones") { $("zones").checked = true; $("screen").classList.add("zones"); }
+  if (part === "tx") { S.tx = true; S.po = 9; S.swr = true; }
+}
+if (S.screen !== "main") S.lastTouch = Date.now() + 3600e3; // sin retorno automático en capturas
+
+setZoom();
+render();
+</script>
+</body>
+</html>

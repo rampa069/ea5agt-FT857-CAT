@@ -15,7 +15,16 @@ static SPIClass touchSpi(VSPI);
 static XPT2046_Touchscreen touch(TOUCH_CS, TOUCH_IRQ);
 static RigDisplay display(tft);
 
+#if CAT_OVER_USB
+// El CAT ocupa el UART0 del USB: no se puede usar Serial para log.
+static ft8x7::ArduinoCatPort catPort(Serial);
+#define LOG(...) \
+  do {           \
+  } while (0)
+#else
 static ft8x7::ArduinoCatPort catPort(Serial2);
+#define LOG(...) Serial.printf(__VA_ARGS__)
+#endif
 static ft8x7::Ft8x7Cat cat(catPort);
 static ft8x7::RigPoller poller(cat);
 
@@ -50,14 +59,16 @@ static void logState(const ft8x7::RigState& s) {
     ft8x7::formatFrequency(s.freq.hz, freq, sizeof(freq));
     ft8x7::formatMode(s.freq, mode, sizeof(mode));
   }
-  Serial.printf("[%s] %s MHz %s %s S=%u PO=%u%s ok=%lu err=%lu\n", s.linked ? "LINK" : "----", freq,
+  LOG("[%s] %s MHz %s %s S=%u PO=%u%s ok=%lu err=%lu\n", s.linked ? "LINK" : "----", freq,
                 mode, s.tx.transmitting ? "TX" : "RX", s.rx.sMeter, s.tx.poMeter,
                 s.tx.highSwr ? " HI-SWR" : "", static_cast<unsigned long>(s.okCount),
                 static_cast<unsigned long>(s.errorCount));
 }
 
 void setup() {
+#if !CAT_OVER_USB
   Serial.begin(115200);
+#endif
 
   pinMode(LED_R, OUTPUT);
   pinMode(LED_G, OUTPUT);
@@ -74,10 +85,14 @@ void setup() {
   touch.begin(touchSpi);
   touch.setRotation(1);
 
+#if CAT_OVER_USB
+  catPort.begin(CAT_BAUD, -1, -1);  // pines por defecto del UART0 (GPIO3/GPIO1)
+#else
   catPort.begin(CAT_BAUD, CAT_RX_PIN, CAT_TX_PIN);
+#endif
   xTaskCreatePinnedToCore(catTask, "cat", 4096, nullptr, 1, nullptr, 0);
 
-  Serial.printf("CAT %s a %lu baudios, RX=IO%d TX=IO%d\n", RIG_MODEL_NAME,
+  LOG("CAT %s a %lu baudios, RX=IO%d TX=IO%d\n", RIG_MODEL_NAME,
                 static_cast<unsigned long>(CAT_BAUD), CAT_RX_PIN, CAT_TX_PIN);
 }
 

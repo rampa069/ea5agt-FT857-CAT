@@ -268,7 +268,12 @@ def main(argv=None):
         else:
             import serial
 
-            with serial.Serial(args.port, args.baud, bytesize=8, parity="N", stopbits=2, timeout=0.05) as ser:
+            ser = serial.Serial(None, args.baud, bytesize=8, parity="N", stopbits=2, timeout=0.05)
+            ser.port = args.port
+            # DTR/RTS desactivados: en placas ESP32 con auto-reset, activarlos reinicia la placa.
+            ser.dtr = False
+            ser.rts = False
+            with ser:
                 serve(lambda: ser.read(64), ser.write, radio, args.verbose, args.drop_rate)
     except KeyboardInterrupt:
         print()
