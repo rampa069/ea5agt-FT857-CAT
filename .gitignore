@@ -9,3 +9,4 @@
 # PlatformIO
 .pio/
 .vscode/
+__pycache__/
