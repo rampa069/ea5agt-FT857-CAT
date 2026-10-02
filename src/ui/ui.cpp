@@ -15,7 +15,6 @@ namespace {
 constexpr int16_t W = 320;
 constexpr int16_t H = 240;
 constexpr uint32_t kReturnMs = 10000;
-constexpr uint32_t kToastMs = 1300;
 constexpr int16_t kToastY = 192;
 constexpr int16_t kToastH = 44;
 
@@ -130,6 +129,24 @@ void Ui::update(const RigState& s, uint32_t nowMs) {
 
   if (screen_ != Screen::Main && screen_ != Screen::Calibrate && nowMs - lastTouchMs_ > kReturnMs) {
     show(Screen::Main);
+  }
+
+  // Bluetooth bien pero la radio calla más de 4 s: casi siempre CAT RATE distinto del adaptador
+  // o, en el FT-857, el menú 020 fuera de CAT.
+  bool noCat = settings_.transport == rigui::Transport::Bluetooth && bt_.state == rigui::BtState::Connected &&
+               !s.linked;
+  if (!noCat) {
+    btNoCatSinceMs_ = 0;
+  } else if (btNoCatSinceMs_ == 0) {
+    btNoCatSinceMs_ = nowMs ? nowMs : 1;
+  }
+  bool showNoCat = btNoCatSinceMs_ && nowMs - btNoCatSinceMs_ > 4000;
+  if (showNoCat != btNoCat_) {
+    btNoCat_ = showNoCat;
+    if (screen_ == Screen::Bluetooth) drawBtStatus();
+    if (showNoCat && (screen_ == Screen::Bluetooth || screen_ == Screen::Main)) {
+      toast("Radio muda: CAT RATE 9600, menu 020 CAT", 8000);
+    }
   }
 
   // Split leído de la radio: manda sobre lo que el display creía haber enviado.
@@ -551,9 +568,9 @@ void Ui::drawField(int16_t x, int16_t y, int16_t w, int16_t h, const char* text,
   tft_.drawString(text, x + w / 2, y + h / 2 + 1, font);
 }
 
-void Ui::toast(const char* text) {
+void Ui::toast(const char* text, uint32_t durationMs) {
   snprintf(toastText_, sizeof(toastText_), "%s", text);
-  toastUntilMs_ = nowMs_ + kToastMs;
+  toastUntilMs_ = nowMs_ + durationMs;
   if (toastShown_) {
     dirty_ = true;  // sustituir el aviso anterior
   }
@@ -716,9 +733,10 @@ void Ui::drawMainDynamic(const RigState& s, bool force) {
   }
   const char* link = linkLabel(live);
   if (linkChanged || link != cache_.link) {
-    uint16_t c = live ? th_.linkOk : (link[0] == 'B' ? th_.boxStale : th_.linkLost);
+    bool noCatLabel = !live && btNoCat_;
+    uint16_t c = live ? th_.linkOk : noCatLabel ? th_.po : (link[0] == 'B' ? th_.boxStale : th_.linkLost);
     tft_.fillRoundRect(236, 1, 80, 18, 4, c);
-    tft_.setTextColor(th_.text, c);
+    tft_.setTextColor(noCatLabel ? th_.bg : th_.text, c);
     tft_.setTextDatum(MC_DATUM);
     tft_.setTextPadding(0);
     tft_.drawString(link, 276, 10, 2);
@@ -933,6 +951,7 @@ void Ui::drawDiag(const RigState& s) {
 const char* Ui::linkLabel(bool live) const {
   bool viaBt = settings_.transport == rigui::Transport::Bluetooth;
   if (live) return viaBt ? "BT OK" : "CAT OK";
+  if (viaBt && btNoCat_) return "BT sin CAT";
   if (viaBt && (bt_.state == rigui::BtState::Connecting || bt_.state == rigui::BtState::Scanning)) return "BT ...";
   return "NO LINK";
 }
@@ -946,6 +965,9 @@ void Ui::drawBtStatus() {
   } else if (settings_.transport != rigui::Transport::Bluetooth) {
     snprintf(buf, sizeof(buf), "Enlace por cable (cambialo en Ajustes)");
     color = th_.textDim;
+  } else if (btNoCat_) {
+    snprintf(buf, sizeof(buf), "Conectado, pero la radio no responde");
+    color = th_.po;
   } else if ((bt_.state == rigui::BtState::Connected || bt_.state == rigui::BtState::Connecting ||
               bt_.state == rigui::BtState::Failed) && bt_.haveDevice) {
     const char* name = bt_.device.name[0] ? bt_.device.name : "adaptador";

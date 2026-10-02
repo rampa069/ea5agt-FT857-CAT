@@ -91,7 +91,7 @@ class Ui {
   // Acciones
   void perform(const Button& b, const ft8x7::RigState& s, bool repeat);
   bool send(const ft8x7::Command& cmd, const ft8x7::RigState& s);
-  void toast(const char* text);
+  void toast(const char* text, uint32_t durationMs = 1300);
   int hit(int16_t x, int16_t y) const;
   void calibrationTouch(rigui::RawPoint raw);
   void refreshButtons();
@@ -111,7 +111,7 @@ class Ui {
   uint32_t lastDiagMs_ = 0;
   int lastCountdownW_ = -1;
 
-  char toastText_[32] = "";
+  char toastText_[48] = "";
   uint32_t toastUntilMs_ = 0;
   bool toastShown_ = false;
 
@@ -138,6 +138,9 @@ class Ui {
   rigui::BtFound btResults_[kBtMaxResults];
   size_t btResultCount_ = 0;
   size_t btPage_ = 0;
+  // Bluetooth conectado pero la radio no contesta (velocidad o menú CAT mal): avisar.
+  uint32_t btNoCatSinceMs_ = 0;
+  bool btNoCat_ = false;
   uint32_t lastBtPollMs_ = 0;
 
   uint8_t calibStep_ = 0;
