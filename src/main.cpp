@@ -183,7 +183,7 @@ class Host : public UiHost {
   bool sendCat(const ft8x7::Command& cmd) override { return poller.enqueue(cmd); }
 
   rigui::BtStatus btStatus() override { return btLink.status(); }
-  size_t btResults(rigui::BtDevice* out, size_t max) override { return btLink.results(out, max); }
+  size_t btResults(rigui::BtFound* out, size_t max) override { return btLink.results(out, max); }
   void btScan() override { btLink.requestScan(); }
   void btConnect(const rigui::BtDevice& device) override { btLink.requestConnect(device); }
   void btForget() override {

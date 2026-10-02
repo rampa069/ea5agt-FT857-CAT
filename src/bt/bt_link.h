@@ -13,7 +13,7 @@
 
 class BtLink {
  public:
-  static constexpr size_t kMaxResults = 8;
+  static constexpr size_t kMaxResults = 12;
 
   BtLink();
 
@@ -30,7 +30,7 @@ class BtLink {
   void requestConnect(const rigui::BtDevice& device);
   void requestForget(const uint8_t addr[6]);
   rigui::BtStatus status() const;
-  size_t results(rigui::BtDevice* out, size_t max) const;
+  size_t results(rigui::BtFound* out, size_t max) const;
   // Dispositivo con el que se acaba de conectar a petición del usuario (para guardarlo en ajustes).
   bool takeNewlyPaired(rigui::BtDevice& out);
 
@@ -56,7 +56,7 @@ class BtLink {
 
   mutable std::mutex mutex_;
   rigui::BtStatus status_;
-  rigui::BtDevice results_[kMaxResults];
+  rigui::BtFound results_[kMaxResults];
   size_t resultCount_ = 0;
   bool wantScan_ = false;
   bool wantConnect_ = false;

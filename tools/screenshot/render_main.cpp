@@ -23,16 +23,20 @@ class PrintHost : public UiHost {
 
   // Bluetooth simulado
   rigui::BtStatus bt;
-  rigui::BtDevice devices[3] = {
-      {{0x98, 0xD3, 0x31, 0xF5, 0xA2, 0x10}, "HC-05", -48},
-      {{0x9C, 0xB6, 0xD0, 0x93, 0xC3, 0x08}, "ea5iue-laptop", -61},
-      {{0x28, 0x8F, 0xF6, 0xED, 0x3E, 0x11}, "", -80},
+  // Búsqueda realista: el HC-06 no anuncia nombre (Bluetooth 2.0) y hay más aparatos cerca.
+  rigui::BtFound devices[5] = {
+      {{{0x28, 0x8F, 0xF6, 0xED, 0x3E, 0x11}, "Pixel 8", -42}, 0x5A020C},
+      {{{0x40, 0x16, 0x3B, 0x22, 0x10, 0x05}, "Samsung TV", -55}, 0x20041C},
+      {{{0x98, 0xD3, 0x31, 0xF5, 0xA2, 0x10}, "", -71}, 0x001F00},
+      {{{0x00, 0x1A, 0x7D, 0xDA, 0x71, 0x13}, "JBL Flip 5", -48}, 0x240414},
+      {{{0x9C, 0xB6, 0xD0, 0x93, 0xC3, 0x08}, "ea5iue-laptop", -61}, 0x6C010C},
   };
   size_t deviceCount = 0;
   rigui::BtStatus btStatus() override { return bt; }
-  size_t btResults(rigui::BtDevice* out, size_t max) override {
+  size_t btResults(rigui::BtFound* out, size_t max) override {
     size_t n = deviceCount < max ? deviceCount : max;
     for (size_t i = 0; i < n; ++i) out[i] = devices[i];
+    rigui::sortBtFound(out, n);
     return n;
   }
   void btScan() override { printf("  BT: buscar\n"); }
@@ -190,21 +194,24 @@ int main(int argc, char** argv) {
   settle(rx);
   save("ui_bt_empty");
   host.bt.state = rigui::BtState::Idle;
-  host.deviceCount = 3;
+  host.deviceCount = 5;
   host.bt.scanSerial = 1;
   settle(rx);
   save("ui_bt_results");
-  tap(rx, 160, 86);  // HC-05
+  tap(rx, 288, 163);  // página siguiente
+  save("ui_bt_page2");
+  tap(rx, 288, 97);   // vuelve
+  tap(rx, 130, 86);   // el primero: el adaptador sin nombre
   host.bt.state = rigui::BtState::Connecting;
   host.bt.haveDevice = true;
-  host.bt.device = host.devices[0];
+  host.bt.device = host.devices[2].device;
   host.bt.confirmCode = 482913;
   settle(rx);
   save("ui_bt_confirm");
   host.bt.confirmCode = 0;
   host.bt.state = rigui::BtState::Connected;
   settings.btHaveDevice = true;
-  settings.btDevice = host.devices[0];
+  settings.btDevice = host.devices[2].device;
   settle(rx);
   save("ui_bt_connected");
   tap(rx, 158, 216);  // PIN

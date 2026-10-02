@@ -27,6 +27,19 @@ struct BtDevice {
   int8_t rssi;
 };
 
+// Resultado de una búsqueda: el dispositivo más su clase (Class of Device), que no se guarda.
+struct BtFound {
+  BtDevice device;
+  uint32_t cod;  // 0 si no se conoce
+};
+
+// Cuánto se parece a un adaptador CAT (HC-05/HC-06 y similares): 3 nombre típico, 2 clase
+// «sin categoría»/«varios» (como anuncian los HC-0x), 1 sin nombre ni clase, 0 resto
+// (móviles, audio, ordenadores...).
+int btAdapterScore(const BtFound& found);
+// Ordena: primero los más parecidos a un adaptador, luego por señal.
+void sortBtFound(BtFound* items, size_t count);
+
 struct BtStatus {
   BtState state = BtState::Off;
   BtDevice device{};          // dispositivo configurado o conectado

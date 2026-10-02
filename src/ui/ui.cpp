@@ -111,7 +111,8 @@ void Ui::update(const RigState& s, uint32_t nowMs) {
     rigui::BtStatus st = host_.btStatus();
     if (screen_ == Screen::Bluetooth) {
       if (st.scanSerial != bt_.scanSerial) {
-        btResultCount_ = host_.btResults(btResults_, kBtRows);
+        btResultCount_ = host_.btResults(btResults_, kBtMaxResults);
+        btPage_ = 0;
         layout();
         dirty_ = true;
       } else if (st.state != bt_.state || st.confirmCode != bt_.confirmCode || st.haveDevice != bt_.haveDevice) {
@@ -311,12 +312,21 @@ void Ui::layout() {
       add(192, 100, 122, 44, Action::SetInvert, 1);
       add(68, 160, 246, 44, Action::Calibrate);
       break;
-    case Screen::Bluetooth:
-      for (size_t i = 0; i < btResultCount_; ++i) add(6, 66 + i * 44, 308, 40, Action::BtSelect, i);
+    case Screen::Bluetooth: {
+      bool paged = btResultCount_ > kBtRows;
+      size_t first = btPage_ * kBtRows;
+      for (size_t i = first; i < btResultCount_ && i < first + kBtRows; ++i) {
+        add(6, 66 + (i - first) * 44, paged ? 250 : 308, 40, Action::BtSelect, i);
+      }
+      if (paged) {
+        add(262, 66, 52, 62, Action::BtPage, -1);
+        add(262, 132, 52, 62, Action::BtPage, 1);
+      }
       add(6, 196, 98, 40, Action::BtScan);
       add(108, 196, 100, 40, Action::BtPin);
       add(212, 196, 102, 40, Action::BtForget);
       break;
+    }
     default:
       break;
   }
@@ -371,14 +381,17 @@ void Ui::buttonLabel(const Button& b, char* buf, size_t len) const {
     case Action::BtPin: snprintf(buf, len, "PIN %s", settings_.btPin); return;
     case Action::BtForget: t = "Olvidar"; break;
     case Action::BtSelect: {
-      const rigui::BtDevice& d = btResults_[b.arg];
+      const rigui::BtDevice& d = btResults_[b.arg].device;
       if (d.name[0]) {
         snprintf(buf, len, "%s", d.name);
       } else {
-        rigui::formatBtAddr(d.addr, buf, len);
+        char addr[18];
+        rigui::formatBtAddr(d.addr, addr, sizeof(addr));
+        snprintf(buf, len, "Sin nombre %s", addr);
       }
       return;
     }
+    case Action::BtPage: t = b.arg < 0 ? "^" : "v"; break;
     default: break;
   }
   snprintf(buf, len, "%s", t);
@@ -415,8 +428,14 @@ Ui::Style Ui::buttonStyle(const Button& b) const {
                                                                                                : Style::Normal;
     case Action::BtForget: return settings_.btHaveDevice ? Style::Normal : Style::Disabled;
     case Action::BtSelect:
-      return settings_.btHaveDevice && memcmp(settings_.btDevice.addr, btResults_[b.arg].addr, 6) == 0 ? Style::On
-                                                                                                         : Style::Normal;
+      return settings_.btHaveDevice && memcmp(settings_.btDevice.addr, btResults_[b.arg].device.addr, 6) == 0
+                 ? Style::On
+                 : Style::Normal;
+    case Action::BtPage: {
+      size_t pages = (btResultCount_ + kBtRows - 1) / kBtRows;
+      bool can = b.arg < 0 ? btPage_ > 0 : btPage_ + 1 < pages;
+      return can ? Style::Normal : Style::Disabled;
+    }
     case Action::Key: return keypadPin_ && b.arg == '.' ? Style::Disabled : Style::Normal;
     default: return Style::Normal;
   }
@@ -443,7 +462,7 @@ void Ui::drawButton(size_t i, bool pressed) {
     tft_.drawRoundRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, 4, th_.buttonOnBorder);
   }
 
-  char label[24];
+  char label[40];
   buttonLabel(b, label, sizeof(label));
   int16_t cx = b.x + b.w / 2, cy = b.y + b.h / 2;
   tft_.setTextPadding(0);
@@ -452,6 +471,11 @@ void Ui::drawButton(size_t i, bool pressed) {
 
   if (strcmp(label, "<") == 0 || strcmp(label, ">") == 0) {
     drawArrow(cx, cy, label[0] == '<' ? -1 : 1, fg);
+    return;
+  }
+  if (strcmp(label, "^") == 0 || strcmp(label, "v") == 0) {  // flechas verticales (paginar)
+    int dir = label[0] == '^' ? -1 : 1;
+    tft_.fillTriangle(cx, cy + dir * 8, cx - 10, cy - dir * 8, cx + 10, cy - dir * 8, fg);
     return;
   }
   if (b.action == Action::Back) {
@@ -474,11 +498,14 @@ void Ui::drawButton(size_t i, bool pressed) {
 // Fuente 4 si la etiqueta cabe; en filas de botones iguales (pasos, baudios, tonos...) toda la
 // fila usa la misma fuente para que no queden tamaños mezclados.
 uint8_t Ui::buttonFont(const Button& b) const {
-  char label[24];
+  char label[40];
   auto fits = [&](const Button& o) {
     buttonLabel(o, label, sizeof(label));
     return o.h >= 30 && tft_.textWidth(label, 4) <= o.w - 6;
   };
+  if (b.action == Action::BtSelect) {
+    return 2;  // nombres y direcciones largas: tamaño fijo para que no cambie entre páginas
+  }
   if (!fits(b)) {
     return 2;
   }
@@ -1193,7 +1220,7 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
     case Action::OpenDisplay: show(Screen::Display); break;
     case Action::OpenBluetooth:
       bt_ = host_.btStatus();
-      btResultCount_ = host_.btResults(btResults_, kBtRows);
+      btResultCount_ = host_.btResults(btResults_, kBtMaxResults);
       show(Screen::Bluetooth);
       break;
     case Action::SetTransport:
@@ -1201,7 +1228,7 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
       host_.settingsChanged(true);
       if (settings_.transport == rigui::Transport::Bluetooth && !settings_.btHaveDevice) {
         bt_ = host_.btStatus();
-        btResultCount_ = host_.btResults(btResults_, kBtRows);
+        btResultCount_ = host_.btResults(btResults_, kBtMaxResults);
         show(Screen::Bluetooth);
       } else {
         refreshButtons();
@@ -1218,8 +1245,13 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
       layout();
       dirty_ = true;
       break;
+    case Action::BtPage:
+      btPage_ = b.arg < 0 ? btPage_ - 1 : btPage_ + 1;
+      layout();
+      dirty_ = true;
+      break;
     case Action::BtSelect: {
-      const rigui::BtDevice d = btResults_[b.arg];
+      const rigui::BtDevice d = btResults_[b.arg].device;
       host_.btConnect(d);
       bt_.state = rigui::BtState::Connecting;
       snprintf(buf, sizeof(buf), "Conectando con %s", d.name[0] ? d.name : "adaptador");

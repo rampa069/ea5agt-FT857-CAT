@@ -2,6 +2,7 @@
 
 #include <initializer_list>
 
+#include <stdio.h>
 #include <string.h>
 
 #include "bt_types.h"
@@ -167,6 +168,40 @@ static void test_settings_migrate_from_v2() {
   TEST_ASSERT_FALSE(junk.migrate(stored, true));  // versión 0: no se aprovecha
 }
 
+static BtFound found(const char* name, uint32_t cod, int8_t rssi) {
+  BtFound f{};
+  snprintf(f.device.name, sizeof(f.device.name), "%s", name);
+  f.cod = cod;
+  f.device.rssi = rssi;
+  return f;
+}
+
+static void test_bt_adapter_score() {
+  TEST_ASSERT_EQUAL(3, btAdapterScore(found("HC-06", 0x1F00, -70)));
+  TEST_ASSERT_EQUAL(3, btAdapterScore(found("linvor", 0, -70)));
+  TEST_ASSERT_EQUAL(3, btAdapterScore(found("FT857 CAT", 0x5A020C, -70)));
+  TEST_ASSERT_EQUAL(2, btAdapterScore(found("", 0x001F00, -70)));   // HC-06 sin nombre resuelto
+  TEST_ASSERT_EQUAL(1, btAdapterScore(found("", 0, -70)));
+  TEST_ASSERT_EQUAL(0, btAdapterScore(found("Pixel 8", 0x5A020C, -40)));     // móvil
+  TEST_ASSERT_EQUAL(0, btAdapterScore(found("JBL Flip", 0x240414, -40)));    // audio
+}
+
+static void test_bt_sort_puts_unnamed_adapter_before_phones() {
+  // El caso de Miquel: el HC-06 no anuncia nombre y quedaba detrás de los dispositivos con nombre.
+  BtFound list[5] = {
+      found("Pixel 8", 0x5A020C, -40),
+      found("Samsung TV", 0x20041C, -55),
+      found("JBL Flip", 0x240414, -45),
+      found("", 0x001F00, -75),  // el adaptador
+      found("ea5iue-laptop", 0x6C010C, -60),
+  };
+  sortBtFound(list, 5);
+  TEST_ASSERT_EQUAL_INT8(-75, list[0].device.rssi);
+  TEST_ASSERT_EQUAL_STRING("", list[0].device.name);
+  TEST_ASSERT_EQUAL_STRING("Pixel 8", list[1].device.name);  // luego por señal
+  TEST_ASSERT_EQUAL_STRING("JBL Flip", list[2].device.name);
+}
+
 static void test_bt_address_format() {
   const uint8_t a[6] = {0x98, 0xD3, 0x31, 0xF5, 0xA2, 0x10};
   char buf[18];
@@ -191,5 +226,7 @@ int main() {
   RUN_TEST(test_settings_defaults_and_validation);
   RUN_TEST(test_settings_migrate_from_v2);
   RUN_TEST(test_bt_address_format);
+  RUN_TEST(test_bt_adapter_score);
+  RUN_TEST(test_bt_sort_puts_unnamed_adapter_before_phones);
   return UNITY_END();
 }

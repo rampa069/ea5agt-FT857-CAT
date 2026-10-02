@@ -22,7 +22,7 @@ class UiHost {
 
   // Bluetooth (transporte alternativo al cable)
   virtual rigui::BtStatus btStatus() = 0;
-  virtual size_t btResults(rigui::BtDevice* out, size_t max) = 0;
+  virtual size_t btResults(rigui::BtFound* out, size_t max) = 0;
   virtual void btScan() = 0;
   virtual void btConnect(const rigui::BtDevice& device) = 0;
   virtual void btForget() = 0;
@@ -49,7 +49,7 @@ class Ui {
     SetMode, SetBand, Key, KeyDel, KeyClear, KeyOk, Split, OpenClar, OpenRepeater, Lock,
     OpenSettings, OpenDiag, ClarToggle, ClarDelta, RptShift, RptOffset, ToneMode, ToneValue,
     SetModel, SetBaud, Brightness, Calibrate,
-    SetTransport, OpenDisplay, OpenBluetooth, BtScan, BtSelect, BtPin, BtForget, SetInvert,
+    SetTransport, OpenDisplay, OpenBluetooth, BtScan, BtSelect, BtPin, BtForget, SetInvert, BtPage,
   };
   enum class Style : uint8_t { Normal, On, Disabled, Custom };
 
@@ -132,10 +132,12 @@ class Ui {
   bool keypadPin_ = false;  // el teclado edita el PIN Bluetooth en vez de una frecuencia
 
   // Bluetooth: última copia del estado y de la búsqueda
-  static constexpr size_t kBtRows = 3;
+  static constexpr size_t kBtRows = 3;      // dispositivos por página
+  static constexpr size_t kBtMaxResults = 12;
   rigui::BtStatus bt_{};
-  rigui::BtDevice btResults_[kBtRows];
+  rigui::BtFound btResults_[kBtMaxResults];
   size_t btResultCount_ = 0;
+  size_t btPage_ = 0;
   uint32_t lastBtPollMs_ = 0;
 
   uint8_t calibStep_ = 0;

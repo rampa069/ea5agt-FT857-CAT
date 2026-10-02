@@ -155,25 +155,23 @@ void BtLink::service(bool haveDevice, const rigui::BtDevice& device, const char*
 void BtLink::doScan() {
   setState(rigui::BtState::Scanning);
   BTScanResults* r = bt_.discover(kScanMs);
-  rigui::BtDevice found[kMaxResults];
+  rigui::BtFound found[kMaxResults];
   size_t n = 0;
   int count = r ? r->getCount() : 0;
   for (int i = 0; i < count && n < kMaxResults; ++i) {
     BTAdvertisedDevice* d = r->getDevice(i);
-    rigui::BtDevice dev{};
-    memcpy(dev.addr, *d->getAddress().getNative(), 6);
+    rigui::BtFound f{};
+    memcpy(f.device.addr, *d->getAddress().getNative(), 6);
     if (d->haveName()) {
-      snprintf(dev.name, sizeof(dev.name), "%s", d->getName().c_str());
+      snprintf(f.device.name, sizeof(f.device.name), "%s", d->getName().c_str());
     }
-    dev.rssi = d->haveRSSI() ? d->getRSSI() : -127;
-    found[n++] = dev;
+    f.device.rssi = d->haveRSSI() ? d->getRSSI() : -127;
+    f.cod = d->haveCOD() ? d->getCOD() : 0;
+    found[n++] = f;
   }
-  // Primero los que tienen nombre y mejor señal.
-  std::sort(found, found + n, [](const rigui::BtDevice& a, const rigui::BtDevice& b) {
-    bool an = a.name[0] != '\0', bn = b.name[0] != '\0';
-    if (an != bn) return an;
-    return a.rssi > b.rssi;
-  });
+  // Los HC-05/06 (Bluetooth 2.0) no anuncian su nombre en la búsqueda: ordenar por parecido a un
+  // adaptador CAT (nombre típico o clase «sin categoría») y luego por señal, no por tener nombre.
+  rigui::sortBtFound(found, n);
   std::lock_guard<std::mutex> lock(mutex_);
   memcpy(results_, found, sizeof(found[0]) * n);
   resultCount_ = n;
@@ -232,7 +230,7 @@ rigui::BtStatus BtLink::status() const {
   return s;
 }
 
-size_t BtLink::results(rigui::BtDevice* out, size_t max) const {
+size_t BtLink::results(rigui::BtFound* out, size_t max) const {
   std::lock_guard<std::mutex> lock(mutex_);
   size_t n = std::min(max, resultCount_);
   memcpy(out, results_, sizeof(results_[0]) * n);
