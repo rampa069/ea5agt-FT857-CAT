@@ -1,0 +1,72 @@
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # git describe para la versión
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Herramientas
+        run: pip install platformio esptool pyserial
+
+      - name: Tests nativos
+        run: pio test -e native
+
+      - name: Tests del simulador
+        run: python -m unittest discover -s tools
+
+      - name: Compilar firmware
+        run: pio run -e cyd -e cyd2usb -e cyd-usbcat
+
+      - name: Preparar la web de instalación
+        run: |
+          python tools/release/build_web.py
+          tools/screenshot/render.sh "$RUNNER_TEMP/render"
+          cp "$RUNNER_TEMP/render/ui_main_rx.png" web/pantalla.png
+          cp docs/ui/mockup.html web/maqueta.html
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: web/firmware/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

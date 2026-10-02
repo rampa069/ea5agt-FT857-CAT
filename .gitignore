@@ -11,3 +11,8 @@
 .vscode/
 __pycache__/
 tools/screenshot/out/
+
+# Web de instalación (la genera CI)
+web/firmware/
+web/pantalla.png
+web/maqueta.html
