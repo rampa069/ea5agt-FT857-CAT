@@ -202,6 +202,29 @@ static void test_bt_sort_puts_unnamed_adapter_before_phones() {
   TEST_ASSERT_EQUAL_STRING("JBL Flip", list[2].device.name);
 }
 
+static void test_settings_migrate_from_v3() {
+  Settings saved;
+  saved.setDefaults(TouchCal{185, 3816, 323, 3887, false}, true);
+  saved.version = 3;
+  size_t stored = Settings::sizeOfVersion(3);
+  Settings loaded;
+  memset(&loaded, 0xAB, sizeof(loaded));
+  memcpy(&loaded, &saved, stored);
+  TEST_ASSERT_TRUE(loaded.migrate(stored, false));
+  TEST_ASSERT_EQUAL(0, loaded.skin);
+  TEST_ASSERT_TRUE(loaded.invertColors);  // se conserva lo que ya había
+}
+
+static void test_dial_range() {
+  uint32_t lo, hi;
+  dialRange(14074000, lo, hi);
+  TEST_ASSERT_EQUAL_UINT32(14000000, lo);
+  TEST_ASSERT_EQUAL_UINT32(14350000, hi);
+  dialRange(15500000, lo, hi);  // fuera de banda: el MHz que la contiene
+  TEST_ASSERT_EQUAL_UINT32(15000000, lo);
+  TEST_ASSERT_EQUAL_UINT32(16000000, hi);
+}
+
 static void test_bt_address_format() {
   const uint8_t a[6] = {0x98, 0xD3, 0x31, 0xF5, 0xA2, 0x10};
   char buf[18];
@@ -226,6 +249,8 @@ int main() {
   RUN_TEST(test_settings_defaults_and_validation);
   RUN_TEST(test_settings_migrate_from_v2);
   RUN_TEST(test_bt_address_format);
+  RUN_TEST(test_settings_migrate_from_v3);
+  RUN_TEST(test_dial_range);
   RUN_TEST(test_bt_adapter_score);
   RUN_TEST(test_bt_sort_puts_unnamed_adapter_before_phones);
   return UNITY_END();

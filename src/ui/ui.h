@@ -9,6 +9,7 @@
 #include "rig_poller.h"
 #include "rig_ui_logic.h"
 #include "bt_types.h"
+#include "skin.h"
 #include "theme.h"
 #include "touch_filter.h"
 #include "ui_settings.h"
@@ -34,8 +35,7 @@ class Ui {
     Main, Mode, Band, Keypad, Menu, Clar, Repeater, Settings, Display, Bluetooth, Diag, Calibrate
   };
 
-  Ui(TFT_eSPI& tft, const Theme& theme, rigui::Settings& settings, UiHost& host)
-      : tft_(tft), th_(theme), settings_(settings), host_(host) {}
+  Ui(TFT_eSPI& tft, rigui::Settings& settings, UiHost& host) : tft_(tft), settings_(settings), host_(host) {}
 
   void begin();
   void update(const ft8x7::RigState& s, uint32_t nowMs);
@@ -50,6 +50,7 @@ class Ui {
     OpenSettings, OpenDiag, ClarToggle, ClarDelta, RptShift, RptOffset, ToneMode, ToneValue,
     SetModel, SetBaud, Brightness, Calibrate,
     SetTransport, OpenDisplay, OpenBluetooth, BtScan, BtSelect, BtPin, BtForget, SetInvert, BtPage,
+    SetSkin, DialTune,
   };
   enum class Style : uint8_t { Normal, On, Disabled, Custom };
 
@@ -67,19 +68,18 @@ class Ui {
   void drawButton(size_t i, bool pressed);
   void buttonLabel(const Button& b, char* buf, size_t len) const;
   Style buttonStyle(const Button& b) const;
-  uint8_t buttonFont(const Button& b) const;
+  bool buttonBig(const Button& b) const;
   void drawHeader(const char* title);
   void drawLabel(int16_t x, int16_t y, const char* text);
   void drawField(int16_t x, int16_t y, int16_t w, int16_t h, const char* text, uint16_t color, uint8_t font);
-  void drawArrow(int16_t cx, int16_t cy, int dir, uint16_t color);
   void drawToast();
   bool underToast(const Button& b) const;
   void drawCountdown(uint32_t nowMs);
 
-  // Pantalla principal (redibujado parcial)
-  void drawMainStatic();
-  void drawMainDynamic(const ft8x7::RigState& s, bool force);
-  void drawMeterScale(bool tx);
+  // Pantalla principal: la dibuja la piel a partir de esta vista
+  MainView buildView(const ft8x7::RigState& s) const;
+  void applySkin();
+  const Theme& th() const { return skin_->theme(); }
   void drawKeypadField();
   void drawClarField();
   void drawRepeaterFields();
@@ -97,7 +97,7 @@ class Ui {
   void refreshButtons();
 
   TFT_eSPI& tft_;
-  const Theme& th_;
+  Skin* skin_ = nullptr;
   rigui::Settings& settings_;
   UiHost& host_;
 
@@ -146,12 +146,9 @@ class Ui {
   uint8_t calibStep_ = 0;
   rigui::RawPoint calibRaw_[5] = {};
 
-  // Caché de la pantalla principal
+  // Último estado de la radio y última vista dibujada de la pantalla principal
   ft8x7::RigState last_{};
-  struct {
-    int linked = -1, freqColor = -1, rawMode = -1, band = -1, split = -1, sqlClar = -1, tx = -1;
-    int meterLevel = -1, meterTx = -1, swr = -1, model = -1, lock = -1, vfo = -1, meterInfo = -1;
-    const char* link = nullptr;
-    uint32_t freqHz = 0;
-  } cache_;
+  MainView lastView_{};
+  bool haveLastView_ = false;
+  int16_t touchX_ = 0;  // x del último toque (para sintonizar en la escala del tema Dial)
 };

@@ -214,7 +214,7 @@ class Host : public UiHost {
 };
 
 static Host host;
-static Ui ui(tft, kDefaultTheme, settings, host);
+static Ui ui(tft, settings, host);
 
 static void pollTouch(const ft8x7::RigState& s, uint32_t now) {
   int16_t rx = 0, ry = 0;
@@ -241,10 +241,11 @@ static void logState(const ft8x7::RigState& s) {
     ft8x7::formatFrequency(s.freq.hz, freq, sizeof(freq));
     ft8x7::formatMode(s.freq, mode, sizeof(mode));
   }
-  LOG("[%s] %s MHz %s %s S=%u PO=%u%s ok=%lu err=%lu wr=%lu\n", s.linked ? "LINK" : "----", freq, mode,
+  LOG("[%s] %s MHz %s %s S=%u PO=%u%s ok=%lu err=%lu wr=%lu heap=%lu max=%lu\n", s.linked ? "LINK" : "----", freq, mode,
       s.tx.transmitting ? "TX" : "RX", s.rx.sMeter, s.tx.poMeter, s.tx.highSwr ? " HI-SWR" : "",
       static_cast<unsigned long>(s.okCount), static_cast<unsigned long>(s.errorCount),
-      static_cast<unsigned long>(s.writeCount));
+      static_cast<unsigned long>(s.writeCount), static_cast<unsigned long>(ESP.getFreeHeap()),
+      static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   (void)freq;
   (void)mode;
 }

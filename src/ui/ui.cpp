@@ -18,20 +18,6 @@ constexpr uint32_t kReturnMs = 10000;
 constexpr int16_t kToastY = 192;
 constexpr int16_t kToastH = 44;
 
-// Pantalla principal
-constexpr int16_t HEADER_H = 20;
-constexpr int16_t FREQ_Y = 26;  // fuente 7: 48 px
-constexpr int16_t ROW_Y = 90;
-constexpr int16_t ROW_H = 44;
-constexpr int16_t METER_TITLE_Y = 138;
-constexpr int16_t METER_Y = 155;
-constexpr int16_t METER_H = 17;
-constexpr int16_t SCALE_Y = 174;
-constexpr int SEGMENTS = 15;
-constexpr int16_t SEG_X0 = 40;
-constexpr int16_t SEG_W = 16;
-constexpr int16_t SEG_GAP = 2;
-
 // Subpantallas
 constexpr int16_t SUB_HEADER_H = 40;
 constexpr int16_t CAL_MARGIN = 20;
@@ -50,8 +36,6 @@ constexpr ft8x7::ToneMode kToneModes[4] = {ft8x7::ToneMode::Off, ft8x7::ToneMode
 constexpr int16_t kClarDeltas[5] = {-100, -10, 0, 10, 100};
 constexpr uint32_t kRptOffsetStep = 100000;
 constexpr uint32_t kRptOffsetMax = 99900000;
-
-int16_t segmentX(int i) { return SEG_X0 + i * (SEG_W + SEG_GAP); }
 
 const char* screenTitle(Ui::Screen s) {
   switch (s) {
@@ -74,7 +58,60 @@ const char* screenTitle(Ui::Screen s) {
 // ---------------------------------------------------------------------------------------------
 // Ciclo de vida
 
-void Ui::begin() { show(Screen::Main); }
+void Ui::begin() {
+  applySkin();
+  show(Screen::Main);
+}
+
+void Ui::applySkin() {
+  Skin* next = &skinAt(settings_.skin < kSkinCount ? settings_.skin : 0);
+  if (next != skin_) {
+    if (skin_) skin_->leave();
+    skin_ = next;
+    skin_->enter(tft_);
+  }
+  haveLastView_ = false;
+  dirty_ = true;
+}
+
+MainView Ui::buildView(const RigState& s) const {
+  MainView v;
+  v.live = s.linked;
+  v.haveFreq = s.haveFreq;
+  v.hz = s.freq.hz;
+  if (s.haveFreq) {
+    ft8x7::formatMode(s.freq, v.mode, sizeof(v.mode));
+  } else {
+    snprintf(v.mode, sizeof(v.mode), "---");
+  }
+  v.band = s.haveFreq ? rigui::bandIndexFor(s.freq.hz) : -1;
+  snprintf(v.bandName, sizeof(v.bandName), "%s", v.band >= 0 ? kBands[v.band].name : (s.haveFreq ? "GEN" : "---"));
+  v.tx = v.live && s.tx.transmitting;
+  // Con EEPROM, el split real; si no, lo último que envió el display (el bit de 0xF7 es dudoso).
+  v.split = v.live && (s.haveSplit ? s.split : split_);
+  v.sqlClar = clarOn_ ? 2 : (v.live && !v.tx && s.rx.squelched ? 1 : 0);
+  v.vfo = v.live && s.haveVfo ? (s.vfoB ? 2 : 1) : 0;
+  v.lock = lock_;
+  v.model = rigui::modelName(settings_.model);
+  v.link = linkLabel(v.live);
+  v.linkKind = v.live ? LinkKind::Ok
+               : btNoCat_ ? LinkKind::NoCat
+               : strcmp(v.link, "BT ...") == 0 ? LinkKind::Connecting
+                                               : LinkKind::Lost;
+  v.level = !v.live ? 0 : (v.tx ? s.tx.poMeter : s.rx.sMeter);
+  v.highSwr = v.tx && s.tx.highSwr;
+  v.haveMeters = v.tx && s.haveMeters;
+  v.meterSwr = s.meters.swr;
+  v.meterAlc = s.meters.alc;
+  if (!v.live) {
+    snprintf(v.levelText, sizeof(v.levelText), "--");
+  } else if (v.tx) {
+    snprintf(v.levelText, sizeof(v.levelText), "%u", s.tx.poMeter);
+  } else {
+    ft8x7::formatSMeter(s.rx.sMeter, v.levelText, sizeof(v.levelText));
+  }
+  return v;
+}
 
 void Ui::show(Screen screen) {
   screen_ = screen;
@@ -166,7 +203,10 @@ void Ui::update(const RigState& s, uint32_t nowMs) {
   if (dirty_) {
     redraw(s);
   } else if (screen_ == Screen::Main) {
-    drawMainDynamic(s, false);
+    MainView v = buildView(s);
+    skin_->drawMainDynamic(tft_, v, haveLastView_ ? &lastView_ : nullptr, nowMs);
+    lastView_ = v;
+    haveLastView_ = true;
   } else if (screen_ == Screen::Diag && nowMs - lastDiagMs_ >= 1000) {
     drawDiag(s);
   }
@@ -182,6 +222,7 @@ void Ui::onTouch(const rigui::TouchEvent& ev, rigui::RawPoint raw, const RigStat
   nowMs_ = nowMs;
   lastTouchMs_ = nowMs;
   last_ = s;
+  if (ev.type == rigui::TouchEventType::Down) touchX_ = ev.x;
 
   if (screen_ == Screen::Calibrate) {
     if (ev.type == rigui::TouchEventType::Down) {
@@ -252,9 +293,11 @@ void Ui::add(int16_t x, int16_t y, int16_t w, int16_t h, Action a, int16_t arg) 
 void Ui::layout() {
   buttonCount_ = 0;
   if (screen_ == Screen::Main) {
-    add(0, 22, W, 56, Action::OpenKeypad);
-    add(4, ROW_Y, 92, ROW_H, Action::OpenMode);
-    add(100, ROW_Y, 76, ROW_H, Action::OpenBand);
+    const MainZones& z = skin_->zones();
+    if (z.dial.w > 0) add(z.dial.x, z.dial.y, z.dial.w, z.dial.h, Action::DialTune);
+    add(z.freq.x, z.freq.y, z.freq.w, z.freq.h, Action::OpenKeypad);
+    add(z.mode.x, z.mode.y, z.mode.w, z.mode.h, Action::OpenMode);
+    add(z.band.x, z.band.y, z.band.w, z.band.h, Action::OpenBand);
     add(4, 192, 60, 44, Action::TuneDown);
     add(68, 192, 60, 44, Action::Step);
     add(132, 192, 60, 44, Action::TuneUp);
@@ -323,11 +366,12 @@ void Ui::layout() {
       add(192, 194, 122, 42, Action::OpenDisplay);
       break;
     case Screen::Display:
-      add(68, 46, 60, 44, Action::Brightness, -10);
-      add(246, 46, 68, 44, Action::Brightness, 10);
-      add(68, 100, 120, 44, Action::SetInvert, 0);
-      add(192, 100, 122, 44, Action::SetInvert, 1);
-      add(68, 160, 246, 44, Action::Calibrate);
+      add(68, 44, 60, 42, Action::Brightness, -10);
+      add(246, 44, 68, 42, Action::Brightness, 10);
+      add(68, 92, 120, 42, Action::SetInvert, 0);
+      add(192, 92, 122, 42, Action::SetInvert, 1);
+      for (int i = 0; i < static_cast<int>(kSkinCount); ++i) add(68 + i * 62, 140, 58, 42, Action::SetSkin, i);
+      add(68, 192, 246, 42, Action::Calibrate);
       break;
     case Screen::Bluetooth: {
       bool paged = btResultCount_ > kBtRows;
@@ -369,7 +413,7 @@ void Ui::buttonLabel(const Button& b, char* buf, size_t len) const {
     case Action::Step: snprintf(buf, len, "PASO\n%s", rigui::stepLabel(settings_.stepIndex)); return;
     case Action::ToggleVfo: t = "A/B"; break;
     case Action::OpenMenu: t = "MENU"; break;
-    case Action::Back: t = "Volver"; break;
+    case Action::Back: t = kBackLabel; break;
     case Action::SetMode: t = ft8x7::modeName(kModeOrder[b.arg]); break;
     case Action::SetBand: t = kBands[b.arg].name; break;
     case Action::Key: snprintf(buf, len, "%c", static_cast<char>(b.arg)); return;
@@ -392,6 +436,7 @@ void Ui::buttonLabel(const Button& b, char* buf, size_t len) const {
     case Action::Calibrate: t = "Calibrar tactil"; break;
     case Action::SetTransport: t = b.arg ? "Bluetooth" : "Cable"; break;
     case Action::SetInvert: t = b.arg ? "Invertidos" : "Normal"; break;
+    case Action::SetSkin: t = skinAt(b.arg).name(); break;
     case Action::OpenBluetooth: t = "Emparejar"; break;
     case Action::OpenDisplay: t = "Pantalla"; break;
     case Action::BtScan: t = "Buscar"; break;
@@ -419,7 +464,9 @@ Ui::Style Ui::buttonStyle(const Button& b) const {
     case Action::OpenKeypad:
     case Action::OpenMode:
     case Action::OpenBand:
+    case Action::DialTune:
       return Style::Custom;
+    case Action::SetSkin: return settings_.skin == b.arg ? Style::On : Style::Normal;
     case Action::SetMode:
       return last_.haveFreq && last_.freq.mode == kModeOrder[b.arg] ? Style::On : Style::Normal;
     case Action::SetBand:
@@ -461,80 +508,38 @@ Ui::Style Ui::buttonStyle(const Button& b) const {
 // ---------------------------------------------------------------------------------------------
 // Dibujo común
 
-void Ui::drawArrow(int16_t cx, int16_t cy, int dir, uint16_t color) {
-  tft_.fillTriangle(cx + dir * 8, cy, cx - dir * 8, cy - 10, cx - dir * 8, cy + 10, color);
-}
-
 void Ui::drawButton(size_t i, bool pressed) {
   const Button& b = buttons_[i];
   Style st = buttonStyle(b);
   if (st == Style::Custom) {
     return;
   }
-  uint16_t bg = pressed ? th_.buttonPressed : (st == Style::On ? th_.buttonOn : th_.button);
-  uint16_t fg = st == Style::Disabled ? th_.buttonDisabledText : th_.text;
-  tft_.fillRoundRect(b.x, b.y, b.w, b.h, 5, bg);
-  if (st == Style::On) {
-    tft_.drawRoundRect(b.x, b.y, b.w, b.h, 5, th_.buttonOnBorder);
-    tft_.drawRoundRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, 4, th_.buttonOnBorder);
-  }
-
   char label[40];
   buttonLabel(b, label, sizeof(label));
-  int16_t cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-  tft_.setTextPadding(0);
-  tft_.setTextColor(fg, bg);
-  tft_.setTextDatum(MC_DATUM);
-
-  if (strcmp(label, "<") == 0 || strcmp(label, ">") == 0) {
-    drawArrow(cx, cy, label[0] == '<' ? -1 : 1, fg);
-    return;
-  }
-  if (strcmp(label, "^") == 0 || strcmp(label, "v") == 0) {  // flechas verticales (paginar)
-    int dir = label[0] == '^' ? -1 : 1;
-    tft_.fillTriangle(cx, cy + dir * 8, cx - 10, cy - dir * 8, cx + 10, cy - dir * 8, fg);
-    return;
-  }
-  if (b.action == Action::Back) {
-    drawArrow(b.x + 16, cy, -1, fg);
-    tft_.drawString(label, b.x + 50, cy, 2);
-    return;
-  }
-  char* nl = strchr(label, '\n');
-  if (nl) {  // dos líneas: rótulo pequeño + valor
-    *nl = '\0';
-    tft_.setTextColor(th_.textDim, bg);
-    tft_.drawString(label, cx, b.y + 11, 1);
-    tft_.setTextColor(fg, bg);
-    tft_.drawString(nl + 1, cx, b.y + 28, 2);
-    return;
-  }
-  tft_.drawString(label, cx, cy + 1, buttonFont(b));
+  ButtonLook look = st == Style::On ? ButtonLook::On : st == Style::Disabled ? ButtonLook::Disabled : ButtonLook::Normal;
+  skin_->drawButton(tft_, Rect{b.x, b.y, b.w, b.h}, label, look, pressed, buttonBig(b));
 }
 
-// Fuente 4 si la etiqueta cabe; en filas de botones iguales (pasos, baudios, tonos...) toda la
-// fila usa la misma fuente para que no queden tamaños mezclados.
-uint8_t Ui::buttonFont(const Button& b) const {
+// Letra grande si la etiqueta cabe; en filas de botones iguales (pasos, baudios, tonos...) toda la
+// fila usa la misma letra para que no queden tamaños mezclados.
+bool Ui::buttonBig(const Button& b) const {
   char label[40];
   auto fits = [&](const Button& o) {
     buttonLabel(o, label, sizeof(label));
-    return o.h >= 30 && tft_.textWidth(label, 4) <= o.w - 6;
+    return skin_->fitsBig(tft_, label, Rect{o.x, o.y, o.w, o.h});
   };
-  if (b.action == Action::BtSelect) {
-    return 2;  // nombres y direcciones largas: tamaño fijo para que no cambie entre páginas
-  }
-  if (!fits(b)) {
-    return 2;
+  if (b.action == Action::BtSelect || !fits(b)) {
+    return false;  // nombres y direcciones largas: tamaño fijo para que no cambie entre páginas
   }
   if (b.action == Action::SetBand) {
-    return 4;
+    return true;
   }
   for (size_t i = 0; i < buttonCount_; ++i) {
     if (buttons_[i].action == b.action && !fits(buttons_[i])) {
-      return 2;
+      return false;
     }
   }
-  return 4;
+  return true;
 }
 
 void Ui::refreshButtons() {
@@ -544,8 +549,8 @@ void Ui::refreshButtons() {
 }
 
 void Ui::drawHeader(const char* title) {
-  tft_.fillRect(0, 0, W, SUB_HEADER_H, th_.header);
-  tft_.setTextColor(th_.text, th_.header);
+  tft_.fillRect(0, 0, W, SUB_HEADER_H, th().header);
+  tft_.setTextColor(th().text, th().header);
   tft_.setTextDatum(ML_DATUM);
   tft_.setTextPadding(0);
   uint8_t font = tft_.textWidth(title, 4) <= W - 104 ? 4 : 2;
@@ -553,7 +558,7 @@ void Ui::drawHeader(const char* title) {
 }
 
 void Ui::drawLabel(int16_t x, int16_t y, const char* text) {
-  tft_.setTextColor(th_.textDim, th_.bg);
+  tft_.setTextColor(th().textDim, th().bg);
   tft_.setTextDatum(ML_DATUM);
   tft_.setTextPadding(58);
   tft_.drawString(text, x, y, 2);
@@ -561,8 +566,8 @@ void Ui::drawLabel(int16_t x, int16_t y, const char* text) {
 }
 
 void Ui::drawField(int16_t x, int16_t y, int16_t w, int16_t h, const char* text, uint16_t color, uint8_t font) {
-  tft_.fillRoundRect(x, y, w, h, 4, th_.field);
-  tft_.setTextColor(color, th_.field);
+  tft_.fillRoundRect(x, y, w, h, 4, th().field);
+  tft_.setTextColor(color, th().field);
   tft_.setTextDatum(MC_DATUM);
   tft_.setTextPadding(0);
   tft_.drawString(text, x + w / 2, y + h / 2 + 1, font);
@@ -583,9 +588,9 @@ bool Ui::underToast(const Button& b) const { return b.y + b.h > kToastY && b.y <
 // banda y medidores cambian con cada lectura y taparían el aviso). Tocar la pantalla lo cierra.
 void Ui::drawToast() {
   const int16_t x = 4, y = kToastY, w = 312, h = kToastH;
-  tft_.fillRoundRect(x, y, w, h, 6, th_.bg);
-  tft_.drawRoundRect(x, y, w, h, 6, th_.accent);
-  tft_.setTextColor(th_.accent, th_.bg);
+  tft_.fillRoundRect(x, y, w, h, 6, th().bg);
+  tft_.drawRoundRect(x, y, w, h, 6, th().accent);
+  tft_.setTextColor(th().accent, th().bg);
   tft_.setTextDatum(MC_DATUM);
   tft_.setTextPadding(0);
   tft_.drawString(toastText_, x + w / 2, y + h / 2, 2);
@@ -600,8 +605,8 @@ void Ui::drawCountdown(uint32_t nowMs) {
   if (lastCountdownW_ >= 0 && abs(w - lastCountdownW_) < 4) {
     return;
   }
-  tft_.fillRect(0, H - 2, w, 2, th_.accent);
-  tft_.fillRect(w, H - 2, W - w, 2, th_.bg);
+  tft_.fillRect(0, H - 2, w, 2, th().accent);
+  tft_.fillRect(w, H - 2, W - w, 2, th().bg);
   lastCountdownW_ = w;
 }
 
@@ -610,22 +615,26 @@ void Ui::redraw(const RigState& s) {
   toastShown_ = false;  // el repintado lo borra: si sigue vigente, update() lo vuelve a dibujar
   lastCountdownW_ = -1;
   if (screen_ == Screen::Main) {
-    drawMainStatic();
-    drawMainDynamic(s, true);
+    skin_->drawMainStatic(tft_);
+    refreshButtons();
+    MainView v = buildView(s);
+    skin_->drawMainDynamic(tft_, v, nullptr, nowMs_);
+    lastView_ = v;
+    haveLastView_ = true;
     return;
   }
   if (screen_ == Screen::Calibrate) {
     drawCalibrate();
     return;
   }
-  tft_.fillScreen(th_.bg);
+  tft_.fillScreen(th().bg);
   drawHeader(screen_ == Screen::Keypad && keypadPin_ ? "PIN Bluetooth" : screenTitle(screen_));
   refreshButtons();
   switch (screen_) {
     case Screen::Keypad: drawKeypadField(); break;
     case Screen::Clar:
       drawClarField();
-      tft_.setTextColor(th_.textDim, th_.bg);
+      tft_.setTextColor(th().textDim, th().bg);
       tft_.setTextDatum(MC_DATUM);
       tft_.drawString("Hz por toque, maximo +-9.99 kHz", W / 2, 172, 2);
       break;
@@ -641,17 +650,18 @@ void Ui::redraw(const RigState& s) {
       drawLabel(6, 166, "Baudios");
       break;
     case Screen::Display: {
-      drawLabel(6, 68, "Brillo");
-      drawLabel(6, 122, "Colores");
+      drawLabel(6, 65, "Brillo");
+      drawLabel(6, 113, "Colores");
+      drawLabel(6, 161, "Tema");
       char buf[8];
       snprintf(buf, sizeof(buf), "%u %%", settings_.brightness);
-      drawField(132, 46, 110, 44, buf, th_.text, 4);
+      drawField(132, 44, 110, 42, buf, th().text, 4);
       break;
     }
     case Screen::Bluetooth:
       drawBtStatus();
       if (btResultCount_ == 0) {
-        tft_.setTextColor(th_.textDim, th_.bg);
+        tft_.setTextColor(th().textDim, th().bg);
         tft_.setTextDatum(MC_DATUM);
         tft_.setTextPadding(0);
         char msg[48];
@@ -669,221 +679,31 @@ void Ui::redraw(const RigState& s) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Pantalla principal
-
-void Ui::drawMainStatic() {
-  tft_.fillScreen(th_.bg);
-  tft_.fillRect(0, 0, W, HEADER_H, th_.header);
-  tft_.setTextColor(th_.textDim, th_.bg);
-  tft_.setTextDatum(TR_DATUM);
-  tft_.setTextPadding(0);
-  tft_.drawString("MHz", W - 8, 78, 1);
-  refreshButtons();
-  cache_ = {};
-  cache_.freqHz = 0;
-}
-
-void Ui::drawMeterScale(bool tx) {
-  tft_.fillRect(0, SCALE_Y, W, 16, th_.bg);
-  tft_.setTextColor(th_.textDim, th_.bg);
-  tft_.setTextDatum(TC_DATUM);
-  tft_.setTextPadding(0);
-  if (tx) {
-    for (int v = 0; v <= SEGMENTS; v += 5) {
-      int16_t x = v == 0 ? SEG_X0 : segmentX(v - 1) + SEG_W;
-      tft_.drawNumber(v, x, SCALE_Y, 2);
-    }
-    return;
-  }
-  static const struct {
-    int level;
-    const char* label;
-  } kMarks[] = {{1, "1"}, {3, "3"}, {5, "5"}, {7, "7"}, {9, "9"}, {11, "+20"}, {13, "+40"}, {15, "+60"}};
-  for (const auto& m : kMarks) {
-    tft_.drawString(m.label, segmentX(m.level - 1) + SEG_W / 2, SCALE_Y, 2);
-  }
-}
-
-void Ui::drawMainDynamic(const RigState& s, bool force) {
-  const bool live = s.linked;
-  const bool tx = live && s.tx.transmitting;
-  const bool linkChanged = force || cache_.linked != live;
-  char buf[24];
-
-  // Cabecera: modelo, LOCK y estado del enlace
-  int model = static_cast<int>(settings_.model);
-  int vfo = live && s.haveVfo ? (s.vfoB ? 2 : 1) : 0;
-  if (force || cache_.model != model || cache_.lock != lock_ || cache_.vfo != vfo) {
-    tft_.fillRect(0, 0, 230, HEADER_H, th_.header);
-    tft_.setTextColor(th_.text, th_.header);
-    tft_.setTextDatum(ML_DATUM);
-    tft_.setTextPadding(0);
-    tft_.drawString(rigui::modelName(settings_.model), 6, HEADER_H / 2, 2);
-    if (vfo) {
-      tft_.setTextColor(th_.text, th_.header);
-      tft_.drawString(vfo == 2 ? "VFO B" : "VFO A", 96, HEADER_H / 2, 2);
-    }
-    if (lock_) {
-      tft_.setTextColor(th_.accent, th_.header);
-      tft_.drawString("LOCK", 170, HEADER_H / 2, 2);
-    }
-    cache_.model = model;
-    cache_.lock = lock_;
-    cache_.vfo = vfo;
-  }
-  const char* link = linkLabel(live);
-  if (linkChanged || link != cache_.link) {
-    bool noCatLabel = !live && btNoCat_;
-    uint16_t c = live ? th_.linkOk : noCatLabel ? th_.po : (link[0] == 'B' ? th_.boxStale : th_.linkLost);
-    tft_.fillRoundRect(236, 1, 80, 18, 4, c);
-    tft_.setTextColor(noCatLabel ? th_.bg : th_.text, c);
-    tft_.setTextDatum(MC_DATUM);
-    tft_.setTextPadding(0);
-    tft_.drawString(link, 276, 10, 2);
-    cache_.linked = live;
-    cache_.link = link;
-  }
-
-  // Frecuencia (atenuada sin enlace)
-  int freqColor = !s.haveFreq ? -2 : (live ? th_.freq : th_.freqStale);
-  if (force || freqColor != cache_.freqColor || (s.haveFreq && s.freq.hz != cache_.freqHz)) {
-    tft_.setTextDatum(TR_DATUM);
-    tft_.setTextPadding(W - 20);
-    if (s.haveFreq) {
-      ft8x7::formatFrequency(s.freq.hz, buf, sizeof(buf));
-      tft_.setTextColor(freqColor, th_.bg);
-    } else {
-      snprintf(buf, sizeof(buf), "---.---.--");
-      tft_.setTextColor(th_.freqStale, th_.bg);
-    }
-    tft_.drawString(buf, W - 10, FREQ_Y, 7);
-    tft_.setTextPadding(0);
-    cache_.freqColor = freqColor;
-    cache_.freqHz = s.haveFreq ? s.freq.hz : 0;
-  }
-
-  // Modo y banda (zonas táctiles)
-  uint16_t box = live ? th_.box : th_.boxStale;
-  int rawMode = s.haveFreq ? s.freq.rawMode : -2;
-  if (linkChanged || rawMode != cache_.rawMode) {
-    snprintf(buf, sizeof(buf), "---");
-    if (s.haveFreq) ft8x7::formatMode(s.freq, buf, sizeof(buf));
-    tft_.fillRoundRect(4, ROW_Y, 92, ROW_H, 6, box);
-    tft_.setTextColor(th_.text, box);
-    tft_.setTextDatum(MC_DATUM);
-    tft_.drawString(buf, 50, ROW_Y + ROW_H / 2 + 1, 4);
-    cache_.rawMode = rawMode;
-  }
-  int band = s.haveFreq ? rigui::bandIndexFor(s.freq.hz) : -2;
-  if (linkChanged || band != cache_.band) {
-    const char* name = band >= 0 ? kBands[band].name : (s.haveFreq ? "GEN" : "---");
-    tft_.fillRoundRect(100, ROW_Y, 76, ROW_H, 6, box);
-    tft_.setTextColor(th_.text, box);
-    tft_.setTextDatum(MC_DATUM);
-    tft_.drawString(name, 138, ROW_Y + ROW_H / 2 + 1, tft_.textWidth(name, 4) <= 70 ? 4 : 2);
-    cache_.band = band;
-  }
-
-  // Indicadores SPLIT y SQL/CLAR
-  auto flag = [&](int16_t y, const char* label, bool on, uint16_t color) {
-    tft_.fillRoundRect(182, y, 58, 20, 3, on ? color : th_.bg);
-    tft_.drawRoundRect(182, y, 58, 20, 3, on ? color : th_.flagOff);
-    tft_.setTextColor(on ? th_.bg : th_.flagOff, on ? color : th_.bg);
-    tft_.setTextDatum(MC_DATUM);
-    tft_.drawString(label, 211, y + 10, 2);
-  };
-  // Con EEPROM, el split real; si no, lo último que envió el display (el bit de 0xF7 es dudoso).
-  int split = live && (s.haveSplit ? s.split : split_);
-  if (force || split != cache_.split) {
-    flag(ROW_Y, "SPLIT", split, th_.flagSplit);
-    cache_.split = split;
-  }
-  int sqlClar = clarOn_ ? 2 : (live && !tx && s.rx.squelched ? 1 : 0);
-  if (force || sqlClar != cache_.sqlClar) {
-    if (sqlClar == 2) flag(ROW_Y + 24, "CLAR", true, th_.flagClar);
-    else flag(ROW_Y + 24, "SQL", sqlClar == 1, th_.flagSql);
-    cache_.sqlClar = sqlClar;
-  }
-
-  // RX / TX
-  int txState = !live ? 2 : (tx ? 1 : 0);
-  if (force || txState != cache_.tx) {
-    uint16_t c = txState == 2 ? th_.boxStale : (tx ? th_.tx : th_.rx);
-    tft_.fillRoundRect(246, ROW_Y, 70, ROW_H, 6, c);
-    tft_.setTextColor(th_.text, c);
-    tft_.setTextDatum(MC_DATUM);
-    tft_.drawString(tx ? "TX" : "RX", 281, ROW_Y + ROW_H / 2 + 1, 4);
-    cache_.tx = txState;
-  }
-
-  // Medidor
-  int level = !live ? 0 : (tx ? s.tx.poMeter : s.rx.sMeter);
-  int swr = tx && s.tx.highSwr;
-  int meterInfo = tx && s.haveMeters ? (1 + s.meters.swr * 16 + s.meters.alc) : 0;
-  if (force || cache_.meterTx != tx) {
-    drawMeterScale(tx);
-  }
-  if (force || level != cache_.meterLevel || tx != cache_.meterTx || swr != cache_.swr ||
-      meterInfo != cache_.meterInfo) {
-    tft_.fillRect(0, METER_TITLE_Y, W, 16, th_.bg);
-    tft_.setTextPadding(0);
-    tft_.setTextColor(th_.textDim, th_.bg);
-    tft_.setTextDatum(TL_DATUM);
-    tft_.drawString(tx ? "PO" : "S", 8, METER_TITLE_Y, 2);
-    if (swr) {
-      tft_.setTextColor(th_.warn, th_.bg);
-      tft_.setTextDatum(TC_DATUM);
-      tft_.drawString("HI SWR", W / 2, METER_TITLE_Y, 2);
-    } else if (meterInfo) {
-      snprintf(buf, sizeof(buf), "SWR %u   ALC %u", s.meters.swr, s.meters.alc);
-      tft_.setTextColor(th_.textDim, th_.bg);
-      tft_.setTextDatum(TC_DATUM);
-      tft_.drawString(buf, W / 2, METER_TITLE_Y, 2);
-    }
-    if (!live) snprintf(buf, sizeof(buf), "--");
-    else if (tx) snprintf(buf, sizeof(buf), "%u", s.tx.poMeter);
-    else ft8x7::formatSMeter(s.rx.sMeter, buf, sizeof(buf));
-    tft_.setTextColor(th_.text, th_.bg);
-    tft_.setTextDatum(TR_DATUM);
-    tft_.drawString(buf, W - 8, METER_TITLE_Y, 2);
-
-    for (int i = 0; i < SEGMENTS; ++i) {
-      uint16_t c = th_.meterOff;
-      if (i < level) c = tx ? (i < 10 ? th_.po : th_.poHigh) : (i < 9 ? th_.sMeter : th_.sMeterOver);
-      tft_.fillRect(segmentX(i), METER_Y, SEG_W, METER_H, c);
-    }
-    cache_.meterLevel = level;
-    cache_.meterTx = tx;
-    cache_.swr = swr;
-    cache_.meterInfo = meterInfo;
-  }
-}
-
 // ---------------------------------------------------------------------------------------------
 // Subpantallas
 
 void Ui::drawKeypadField() {
   char buf[24];
-  uint16_t color = th_.freq;
+  uint16_t color = th().freq;
   if (keypadError_) {
     snprintf(buf, sizeof(buf), keypadPin_ ? "De 4 a 8 cifras" : "Fuera de rango");
-    color = th_.warn;
+    color = th().warn;
   } else if (keypadPin_) {
     if (keypad_.empty()) {
       snprintf(buf, sizeof(buf), "%s", settings_.btPin);
-      color = th_.textDim;
+      color = th().textDim;
     } else {
       snprintf(buf, sizeof(buf), "%s_", keypad_.text());
     }
   } else if (keypad_.empty()) {
     if (last_.haveFreq) ft8x7::formatFrequency(last_.freq.hz, buf, sizeof(buf));
     else snprintf(buf, sizeof(buf), "MHz");
-    color = th_.textDim;
+    color = th().textDim;
   } else {
     snprintf(buf, sizeof(buf), "%s_", keypad_.text());
   }
-  tft_.fillRoundRect(6, 44, 308, 40, 4, th_.field);
-  tft_.setTextColor(color, th_.field);
+  tft_.fillRoundRect(6, 44, 308, 40, 4, th().field);
+  tft_.setTextColor(color, th().field);
   tft_.setTextDatum(MR_DATUM);
   tft_.setTextPadding(0);
   tft_.drawString(buf, 304, 65, 4);
@@ -893,14 +713,14 @@ void Ui::drawClarField() {
   char buf[16];
   int a = abs(clarHz_);
   snprintf(buf, sizeof(buf), "%c%d.%02d kHz", clarHz_ < 0 ? '-' : '+', a / 1000, (a % 1000) / 10);
-  drawField(112, 48, 202, 44, buf, clarOn_ ? th_.flagClar : th_.textDim, 4);
+  drawField(112, 48, 202, 44, buf, clarOn_ ? th().flagClar : th().textDim, 4);
 }
 
 void Ui::drawRepeaterFields() {
   char buf[20];
   snprintf(buf, sizeof(buf), "%lu.%03lu MHz", static_cast<unsigned long>(settings_.rptOffsetHz / 1000000),
            static_cast<unsigned long>(settings_.rptOffsetHz / 1000 % 1000));
-  drawField(122, 88, 138, 40, buf, th_.text, 2);
+  drawField(122, 88, 138, 40, buf, th().text, 2);
 
   bool dcs = toneMode_ == ft8x7::ToneMode::Dcs;
   drawLabel(6, 198, dcs ? "DCS" : "CTCSS");
@@ -910,7 +730,7 @@ void Ui::drawRepeaterFields() {
     uint16_t t = ft8x7::kCtcssTones[settings_.ctcssIndex];
     snprintf(buf, sizeof(buf), "%u.%u Hz", t / 10, t % 10);
   }
-  drawField(122, 176, 138, 44, buf, toneMode_ == ft8x7::ToneMode::Off ? th_.textDim : th_.text, 2);
+  drawField(122, 176, 138, 44, buf, toneMode_ == ft8x7::ToneMode::Off ? th().textDim : th().text, 2);
 }
 
 void Ui::drawDiag(const RigState& s) {
@@ -938,10 +758,10 @@ void Ui::drawDiag(const RigState& s) {
   for (int i = 0; i < 8; ++i) {
     int16_t y = 48 + i * 24;
     tft_.setTextDatum(TL_DATUM);
-    tft_.setTextColor(th_.textDim, th_.bg);
+    tft_.setTextColor(th().textDim, th().bg);
     tft_.setTextPadding(0);
     tft_.drawString(labels[i], 10, y, 2);
-    tft_.setTextColor(i == 0 && !s.linked ? th_.warn : th_.text, th_.bg);
+    tft_.setTextColor(i == 0 && !s.linked ? th().warn : th().text, th().bg);
     tft_.setTextPadding(180);
     tft_.drawString(rows[i].value, 130, y, 2);
   }
@@ -958,47 +778,47 @@ const char* Ui::linkLabel(bool live) const {
 
 void Ui::drawBtStatus() {
   char buf[48];
-  uint16_t color = th_.text;
+  uint16_t color = th().text;
   if (bt_.confirmCode) {
     snprintf(buf, sizeof(buf), "Confirma el codigo %06lu", static_cast<unsigned long>(bt_.confirmCode));
-    color = th_.accent;
+    color = th().accent;
   } else if (settings_.transport != rigui::Transport::Bluetooth) {
     snprintf(buf, sizeof(buf), "Enlace por cable (cambialo en Ajustes)");
-    color = th_.textDim;
+    color = th().textDim;
   } else if (btNoCat_) {
     snprintf(buf, sizeof(buf), "Conectado, pero la radio no responde");
-    color = th_.po;
+    color = th().po;
   } else if ((bt_.state == rigui::BtState::Connected || bt_.state == rigui::BtState::Connecting ||
               bt_.state == rigui::BtState::Failed) && bt_.haveDevice) {
     const char* name = bt_.device.name[0] ? bt_.device.name : "adaptador";
     snprintf(buf, sizeof(buf), "%s: %s", rigui::btStateName(bt_.state), name);
-    color = bt_.state == rigui::BtState::Connected ? th_.sMeter
-            : bt_.state == rigui::BtState::Failed  ? th_.warn
-                                                   : th_.text;
+    color = bt_.state == rigui::BtState::Connected ? th().sMeter
+            : bt_.state == rigui::BtState::Failed  ? th().warn
+                                                   : th().text;
   } else {
     snprintf(buf, sizeof(buf), "%s", rigui::btStateName(bt_.state));
   }
-  tft_.fillRect(0, 42, W, 22, th_.bg);
-  tft_.setTextColor(color, th_.bg);
+  tft_.fillRect(0, 42, W, 22, th().bg);
+  tft_.setTextColor(color, th().bg);
   tft_.setTextDatum(MC_DATUM);
   tft_.setTextPadding(0);
   tft_.drawString(buf, W / 2, 53, 2);
 }
 
 void Ui::drawCalibrate() {
-  tft_.fillScreen(th_.bg);
+  tft_.fillScreen(th().bg);
   char buf[32];
   snprintf(buf, sizeof(buf), "Toca la cruz (%u/5)", calibStep_ + 1);
-  tft_.setTextColor(th_.text, th_.bg);
+  tft_.setTextColor(th().text, th().bg);
   tft_.setTextDatum(MC_DATUM);
   tft_.setTextPadding(0);
   tft_.drawString(buf, W / 2, 70, 2);
-  tft_.setTextColor(th_.textDim, th_.bg);
+  tft_.setTextColor(th().textDim, th().bg);
   tft_.drawString("con el dedo o el lapiz, firme", W / 2, 90, 2);
   const rigui::RawPoint& t = kCalTargets[calibStep_];
-  tft_.drawFastHLine(t.x - 12, t.y, 25, th_.accent);
-  tft_.drawFastVLine(t.x, t.y - 12, 25, th_.accent);
-  tft_.drawCircle(t.x, t.y, 6, th_.accent);
+  tft_.drawFastHLine(t.x - 12, t.y, 25, th().accent);
+  tft_.drawFastVLine(t.x, t.y - 12, 25, th().accent);
+  tft_.drawCircle(t.x, t.y, 6, th().accent);
 }
 
 void Ui::calibrationTouch(rigui::RawPoint raw) {
@@ -1227,7 +1047,29 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
       settings_.brightness = static_cast<uint8_t>(v < 10 ? 10 : (v > 100 ? 100 : v));
       host_.settingsChanged(true);
       snprintf(buf, sizeof(buf), "%u %%", settings_.brightness);
-      drawField(132, 46, 110, 44, buf, th_.text, 4);
+      drawField(132, 44, 110, 42, buf, th().text, 4);
+      break;
+    }
+    case Action::SetSkin:
+      settings_.skin = static_cast<uint8_t>(b.arg);
+      host_.settingsChanged(true);
+      applySkin();
+      layout();
+      break;
+    case Action::DialTune: {
+      // La zona de la escala abarca exactamente el rango de la banda (o 1 MHz alrededor).
+      if (!s.haveFreq) return;
+      const Rect& d = skin_->zones().dial;
+      uint32_t lo, hi;
+      rigui::dialRange(s.freq.hz, lo, hi);
+      int32_t dx = touchX_ - d.x;
+      dx = dx < 0 ? 0 : (dx > d.w - 1 ? d.w - 1 : dx);
+      uint32_t hz = lo + static_cast<uint32_t>((static_cast<uint64_t>(hi - lo) * dx) / (d.w - 1));
+      hz = (hz + 500) / 1000 * 1000;  // al kHz
+      if (ft8x7::makeSetFrequency(hz, cmd) && send(cmd, s)) {
+        tuneHz_ = hz;
+        lastTuneMs_ = nowMs_;
+      }
       break;
     }
     case Action::SetInvert:

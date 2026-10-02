@@ -16,7 +16,10 @@ Display táctil por CAT para los Yaesu **FT-817 / FT-818 / FT-857 / FT-897** con
   desplazamiento de repetidor y tonos CTCSS/DCS en FM, bloqueo.
 - Conexión con la radio **por cable** (UART a 3,3 V en IO27/IO22, necesita adaptador de nivel) o
   **por Bluetooth** con un adaptador CAT tipo HC-05/HC-06 (pantalla de búsqueda, PIN y reconexión automática).
-- Ajustes guardados en la placa: modelo, baudios, enlace, brillo, calibración del táctil, adaptador Bluetooth.
+- Cuatro temas (Ajustes → Pantalla → Tema): **Clásico**, **Ámbar** (7 segmentos ámbar y S-meter de aguja),
+  **Nixie** (tubos Nixie y ojo mágico) y **Dial** (escala de banda con aguja: tocarla sintoniza). Ideas en
+  [docs/ui/tema-retro-ideas.png](docs/ui/tema-retro-ideas.png).
+- Ajustes guardados en la placa: modelo, baudios, enlace, brillo, tema, calibración del táctil, adaptador Bluetooth.
 - **Nunca transmite**: no envía PTT ni escribe en la EEPROM de la radio.
 
 ## Conexión con la radio
@@ -66,10 +69,10 @@ Si la subida falla con `Invalid head of packet`, el CH340 no aguanta 921600: ya 
 ```
 lib/Ft8x7Cat   Protocolo CAT, cliente, sondeo con cola de escrituras, puerto conmutable (sin Arduino)
 lib/RigUi      Lógica de interfaz: bandas, sintonía, teclado, táctil, ajustes (sin Arduino)
-src/ui         Pantallas (TFT_eSPI) y tema de colores
+src/ui         Pantallas (TFT_eSPI); temas en skin_*.cpp, fuentes suaves generadas en src/ui/fonts
 src/bt         Enlace Bluetooth SPP como maestro
 src/main.cpp   Tarea CAT (núcleo 0), interfaz (núcleo 1), NVS, brillo
-tools/         Simulador, renderizador de capturas, preparación de la web
+tools/         Simulador, renderizador de capturas, preparación de la web, generador de fuentes (tools/fonts)
 web/           Página de instalación (ESP Web Tools), publicada por GitHub Actions
 docs/          Diseño de la interfaz y maqueta
 ```

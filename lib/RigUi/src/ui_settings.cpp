@@ -25,23 +25,29 @@ void Settings::setDefaults(const TouchCal& defaultTouch, bool defaultInvert) {
   btDevice = BtDevice{};
   snprintf(btPin, sizeof(btPin), "1234");
   invertColors = defaultInvert;
+  skin = 0;
 }
 
 size_t Settings::sizeOfVersion(uint16_t v) {
   switch (v) {
     case 2: return offsetof(Settings, invertColors);  // v2 terminaba en btPin
+    case 3: return offsetof(Settings, skin);          // v3 terminaba en invertColors
     case kVersion: return sizeof(Settings);
     default: return 0;
   }
 }
 
 bool Settings::migrate(size_t stored, bool defaultInvert) {
+  // Cada versión sólo añade campos al final: completar los que falten, en orden.
   if (version == 2 && stored >= sizeOfVersion(2)) {
     invertColors = defaultInvert;
-    version = kVersion;
-    return valid();
+    version = 3;
   }
-  return false;
+  if (version == 3 && stored >= sizeOfVersion(2)) {
+    skin = 0;
+    version = 4;
+  }
+  return version == kVersion && valid();
 }
 
 bool Settings::valid() const {
@@ -54,7 +60,7 @@ bool Settings::valid() const {
          ctcssIndex < ft8x7::kCtcssToneCount && dcsIndex < ft8x7::kDcsCodeCount &&
          touch.xMax != touch.xMin && touch.yMax != touch.yMin &&
          static_cast<uint8_t>(transport) <= static_cast<uint8_t>(Transport::Bluetooth) &&
-         btPin[sizeof(btPin) - 1] == '\0' && btDevice.name[sizeof(btDevice.name) - 1] == '\0';
+         btPin[sizeof(btPin) - 1] == '\0' && btDevice.name[sizeof(btDevice.name) - 1] == '\0' && skin < 4;
 }
 
 }  // namespace rigui

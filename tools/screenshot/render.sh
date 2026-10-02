@@ -9,7 +9,8 @@ TFT="$ROOT/.pio/libdeps/cyd/TFT_eSPI"
 mkdir -p "$OUT"
 c++ -std=c++17 -O1 -w -I"$HERE/fake" -I"$TFT" -I"$ROOT/src" -I"$ROOT/src/ui" -I"$ROOT/include" \
   -I"$ROOT/lib/Ft8x7Cat/src" -I"$ROOT/lib/RigUi/src" \
-  "$HERE/render_main.cpp" "$HERE/fake/fake_tft.cpp" "$ROOT"/src/ui/*.cpp \
+  "$HERE/render_main.cpp" "$HERE/fake/fake_tft.cpp" "$HERE/fake/skins_host.cpp" \
+  "$ROOT/src/ui/ui.cpp" "$ROOT/src/ui/theme.cpp" "$ROOT/src/ui/skin_classic.cpp" \
   "$ROOT"/lib/Ft8x7Cat/src/*.cpp "$ROOT"/lib/RigUi/src/*.cpp \
   -o "$OUT/render"
 rm -f "$OUT"/*.png
