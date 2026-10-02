@@ -172,6 +172,16 @@ void BtLink::doScan() {
   // Los HC-05/06 (Bluetooth 2.0) no anuncian su nombre en la búsqueda: ordenar por parecido a un
   // adaptador CAT (nombre típico o clase «sin categoría») y luego por señal, no por tener nombre.
   rigui::sortBtFound(found, n);
+#if !CAT_OVER_USB  // con CAT por el USB el puerto serie es de la radio
+  Serial.printf("Busqueda BT: %u dispositivos\n", static_cast<unsigned>(n));
+  for (size_t i = 0; i < n; ++i) {
+    char addr[18];
+    rigui::formatBtAddr(found[i].device.addr, addr, sizeof(addr));
+    Serial.printf("  %2u. %s  rssi %4d  cod %06lX  puntos %d  \"%s\"\n", static_cast<unsigned>(i + 1), addr,
+                  found[i].device.rssi, static_cast<unsigned long>(found[i].cod), rigui::btAdapterScore(found[i]),
+                  found[i].device.name);
+  }
+#endif
   std::lock_guard<std::mutex> lock(mutex_);
   memcpy(results_, found, sizeof(found[0]) * n);
   resultCount_ = n;
@@ -193,6 +203,12 @@ bool BtLink::doConnect(const rigui::BtDevice& device, const char* pin) {
   // Primero buscando el servicio SPP por SDP (adaptadores reales); si no, canal fijo.
   // connected() cubre el caso visto en pruebas: el emparejamiento acaba justo después del timeout.
   bool ok = bt_.connect(addr) || bt_.connected() || bt_.connect(addr, kFallbackChannel);
+#if !CAT_OVER_USB
+  char a[18];
+  rigui::formatBtAddr(addr, a, sizeof(a));
+  Serial.printf("Conexion BT con %s \"%s\": %s%s\n", a, device.name, ok ? "OK" : "FALLO",
+                gAuthFailed ? " (emparejamiento rechazado)" : "");
+#endif
   gConfirmCode = 0;
   if (!ok && gAuthFailed) {
     // El otro equipo ya no reconoce nuestra clave (lo desemparejaron o cambió el PIN): borrarla
