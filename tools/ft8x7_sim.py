@@ -10,6 +10,10 @@ USB-TTL de 3.3V conectado al conector CN1 de la CYD:
 Sin hardware, --pty crea un puerto virtual y muestra su ruta:
 
     python3 tools/ft8x7_sim.py --pty -v
+
+En Linux, --rfcomm hace de adaptador Bluetooth CAT (servidor SPP/RFCOMM, como un HC-05):
+
+    python3 tools/ft8x7_sim.py --rfcomm 1 -v
 """
 
 import argparse
@@ -254,7 +258,10 @@ def serve(stream_read, stream_write, radio, verbose=False, drop_rate=0.0, stop=N
     buf = bytearray()
     last = time.monotonic()
     while stop is None or not stop.is_set():
-        data = stream_read()
+        try:
+            data = stream_read()
+        except EOFError:  # el otro extremo cerró la conexión
+            return
         now = time.monotonic()
         if not data:
             continue
@@ -288,10 +295,38 @@ def open_pty(baud):
     return master, os.ttyname(slave), slave
 
 
+def serve_rfcomm(channel, radio, verbose, drop_rate):
+    """Servidor Bluetooth SPP (RFCOMM) en Linux: acepta conexiones una tras otra."""
+    import socket
+
+    srv = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+    srv.bind(("00:00:00:00:00:00", channel))
+    srv.listen(1)
+    print(f"Esperando conexión Bluetooth en el canal RFCOMM {channel}", flush=True)
+    while True:
+        conn, addr = srv.accept()
+        print(f"Conectado: {addr[0]}", flush=True)
+
+        def read():
+            data = conn.recv(64)
+            if not data:
+                raise EOFError
+            return data
+
+        try:
+            serve(read, conn.sendall, radio, verbose, drop_rate)
+        except OSError as e:
+            print(f"Conexión perdida: {e}", flush=True)
+        finally:
+            conn.close()
+        print("Desconectado", flush=True)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("port", nargs="?", help="puerto serie (p.ej. /dev/cu.usbserial-1410)")
     ap.add_argument("--pty", action="store_true", help="crear un puerto virtual en vez de usar uno real")
+    ap.add_argument("--rfcomm", type=int, metavar="CANAL", help="(Linux) servidor Bluetooth SPP en ese canal RFCOMM")
     ap.add_argument("--baud", type=int, default=4800, choices=(4800, 9600, 38400))
     ap.add_argument("--model", default="857", choices=("817", "818", "857", "897"))
     ap.add_argument("--static", action="store_true", help="no animar el estado (frecuencia fija, sin TX)")
@@ -300,8 +335,8 @@ def main(argv=None):
     ap.add_argument("-v", "--verbose", action="store_true", help="mostrar cada trama")
     args = ap.parse_args(argv)
 
-    if not args.port and not args.pty:
-        ap.error("indica un puerto o usa --pty")
+    if not args.port and not args.pty and not args.rfcomm:
+        ap.error("indica un puerto o usa --pty o --rfcomm")
 
     radio = Radio(args.model, ack=args.ack)
     if not args.static:
@@ -309,7 +344,9 @@ def main(argv=None):
 
     print(f"Simulador FT-{args.model} a {args.baud} baudios 8N2. Ctrl+C para salir.", flush=True)
     try:
-        if args.pty:
+        if args.rfcomm:
+            serve_rfcomm(args.rfcomm, radio, args.verbose, args.drop_rate)
+        elif args.pty:
             master, name, _slave = open_pty(args.baud)
             print(f"Puerto virtual: {name}", flush=True)
             serve(lambda: os.read(master, 64), lambda b: os.write(master, b), radio, args.verbose, args.drop_rate)

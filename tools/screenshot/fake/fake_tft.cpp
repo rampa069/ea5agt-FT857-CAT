@@ -51,6 +51,29 @@ void TFT_eSPI::drawRoundRect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t
   }
 }
 
+void TFT_eSPI::fillTriangle(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2, uint16_t c) {
+  int32_t minX = x0 < x1 ? (x0 < x2 ? x0 : x2) : (x1 < x2 ? x1 : x2);
+  int32_t maxX = x0 > x1 ? (x0 > x2 ? x0 : x2) : (x1 > x2 ? x1 : x2);
+  int32_t minY = y0 < y1 ? (y0 < y2 ? y0 : y2) : (y1 < y2 ? y1 : y2);
+  int32_t maxY = y0 > y1 ? (y0 > y2 ? y0 : y2) : (y1 > y2 ? y1 : y2);
+  auto edge = [](int32_t ax, int32_t ay, int32_t bx, int32_t by, int32_t px, int32_t py) {
+    return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+  };
+  for (int32_t y = minY; y <= maxY; ++y)
+    for (int32_t x = minX; x <= maxX; ++x) {
+      int32_t a = edge(x0, y0, x1, y1, x, y), b = edge(x1, y1, x2, y2, x, y), d = edge(x2, y2, x0, y0, x, y);
+      if ((a >= 0 && b >= 0 && d >= 0) || (a <= 0 && b <= 0 && d <= 0)) drawPixel(x, y, c);
+    }
+}
+
+void TFT_eSPI::drawCircle(int32_t x0, int32_t y0, int32_t r, uint16_t c) {
+  for (int32_t y = -r; y <= r; ++y)
+    for (int32_t x = -r; x <= r; ++x) {
+      int32_t d = x * x + y * y;
+      if (d <= r * r + r && d >= (r - 1) * (r - 1) + (r - 1)) drawPixel(x0 + x, y0 + y, c);
+    }
+}
+
 int16_t TFT_eSPI::textWidth(const char* s, uint8_t font) {
   const FontInfo* f = fontInfo(font);
   int16_t w = 0;

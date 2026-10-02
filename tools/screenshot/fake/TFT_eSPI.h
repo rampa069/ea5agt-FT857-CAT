@@ -15,6 +15,7 @@
 #define TFT_WHITE 0xFFFF
 #define TFT_ORANGE 0xFDA0
 #define TFT_SKYBLUE 0x867D
+#define MR_DATUM_UNUSED 0
 
 #define TL_DATUM 0
 #define TC_DATUM 1
@@ -45,6 +46,8 @@ class TFT_eSPI {
   void fillScreen(uint16_t c) { fillRect(0, 0, W, H, c); }
   void drawFastHLine(int32_t x, int32_t y, int32_t w, uint16_t c) { fillRect(x, y, w, 1, c); }
   void drawFastVLine(int32_t x, int32_t y, int32_t h, uint16_t c) { fillRect(x, y, 1, h, c); }
+  void fillTriangle(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2, uint16_t c);
+  void drawCircle(int32_t x0, int32_t y0, int32_t r, uint16_t c);
   void fillRoundRect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint16_t c);
   void drawRoundRect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint16_t c);
 
