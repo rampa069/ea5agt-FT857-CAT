@@ -76,3 +76,7 @@ docs/          Diseño de la interfaz y maqueta
 - [KA7OEI: CAT del FT-817](http://www.ka7oei.com/ft817_meow.html).
 - Hamlib, `rigs/yaesu/ft817.c` y `ft857.c`.
 - [YO3GGX: adaptador CAT Bluetooth DIY](https://www.yo3ggx.ro/btcat/FT8x7_DIY_Bluetootth_CAT_interface_v1.pdf).
+
+## Licencia
+
+[GPL-3.0](LICENSE).
