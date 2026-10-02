@@ -108,11 +108,18 @@ class PtyEndToEndTest(unittest.TestCase):
         radio = sim.Radio("817")
         radio.freq, radio.mode = 145_500_000, sim.MODES["FM"]
         master, name, slave = sim.open_pty(4800)
-        threading.Thread(
-            target=sim.serve,
-            args=(lambda: os.read(master, 64), lambda b: os.write(master, b), radio),
-            daemon=True,
-        ).start()
+        stop = threading.Event()
+
+        def read():
+            # Al cerrar el pseudo-terminal os.read falla (EIO): terminar el bucle sin ruido.
+            try:
+                return os.read(master, 64)
+            except OSError:
+                raise EOFError
+
+        server = threading.Thread(target=sim.serve, args=(read, lambda b: os.write(master, b), radio),
+                                  kwargs={"stop": stop}, daemon=True)
+        server.start()
 
         with serial.Serial(name, 4800, stopbits=2, timeout=0.5) as ser:
             ser.write(bytes([0, 0, 0, 0, 0x03]))
@@ -124,7 +131,11 @@ class PtyEndToEndTest(unittest.TestCase):
             ser.write(bytes([0, 0, 0, 0, 0xE7]))
             self.assertEqual(len(ser.read(1)), 1)
             self.assertEqual(ser.read(1), b"")
+        stop.set()
         os.close(slave)
+        os.close(master)
+        server.join(timeout=2)
+        self.assertFalse(server.is_alive())
 
 
 if __name__ == "__main__":
