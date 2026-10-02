@@ -10,3 +10,4 @@
 .pio/
 .vscode/
 __pycache__/
+tools/screenshot/out/
