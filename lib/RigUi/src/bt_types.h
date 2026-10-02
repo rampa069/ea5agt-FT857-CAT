@@ -9,6 +9,9 @@ namespace rigui {
 
 enum class Transport : uint8_t { Cable, Bluetooth };
 
+// Duración de la búsqueda de dispositivos Bluetooth.
+constexpr uint32_t kBtScanSeconds = 25;
+
 enum class BtState : uint8_t {
   Off,         // pila Bluetooth parada (transporte por cable)
   Idle,        // encendida, sin dispositivo configurado

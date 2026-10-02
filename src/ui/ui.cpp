@@ -610,9 +610,13 @@ void Ui::redraw(const RigState& s) {
         tft_.setTextColor(th_.textDim, th_.bg);
         tft_.setTextDatum(MC_DATUM);
         tft_.setTextPadding(0);
-        tft_.drawString(bt_.state == rigui::BtState::Scanning ? "Buscando dispositivos (10 s)..."
-                                                             : "Pulsa Buscar con el adaptador encendido",
-                        W / 2, 120, 2);
+        char msg[48];
+        if (bt_.state == rigui::BtState::Scanning) {
+          snprintf(msg, sizeof(msg), "Buscando dispositivos (%lu s)...", static_cast<unsigned long>(rigui::kBtScanSeconds));
+        } else {
+          snprintf(msg, sizeof(msg), "Pulsa Buscar con el adaptador encendido");
+        }
+        tft_.drawString(msg, W / 2, 120, 2);
       }
       break;
     case Screen::Diag: drawDiag(s); break;

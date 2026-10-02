@@ -7,7 +7,7 @@
 
 namespace {
 
-constexpr uint32_t kScanMs = 10000;
+constexpr uint32_t kScanMs = rigui::kBtScanSeconds * 1000;
 constexpr uint32_t kReconnectEveryMs = 15000;
 constexpr int kFallbackChannel = 1;  // si el equipo no anuncia SPP por SDP (p. ej. un servidor RFCOMM en Linux)
 
