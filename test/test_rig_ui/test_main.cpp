@@ -2,7 +2,11 @@
 
 #include <initializer_list>
 
+#include <string.h>
+
+#include "bt_types.h"
 #include "rig_ui_logic.h"
+#include "ui_settings.h"
 
 using namespace rigui;
 
@@ -118,6 +122,33 @@ static void test_model_names() {
   TEST_ASSERT_EQUAL_STRING("FT-897", modelName(RigModel::FT897));
 }
 
+static void test_settings_defaults_and_validation() {
+  Settings st;
+  st.setDefaults(TouchCal{185, 3816, 323, 3887, false});
+  TEST_ASSERT_TRUE(st.valid());
+  TEST_ASSERT_EQUAL(Transport::Cable, st.transport);
+  TEST_ASSERT_FALSE(st.btHaveDevice);
+  TEST_ASSERT_EQUAL_STRING("1234", st.btPin);
+
+  Settings bad = st;
+  bad.version = 1;  // ajustes de una versión anterior: se descartan
+  TEST_ASSERT_FALSE(bad.valid());
+  bad = st;
+  bad.transport = static_cast<Transport>(7);
+  TEST_ASSERT_FALSE(bad.valid());
+  bad = st;
+  memset(bad.btPin, 'x', sizeof(bad.btPin));  // sin terminador
+  TEST_ASSERT_FALSE(bad.valid());
+}
+
+static void test_bt_address_format() {
+  const uint8_t a[6] = {0x98, 0xD3, 0x31, 0xF5, 0xA2, 0x10};
+  char buf[18];
+  formatBtAddr(a, buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("98:D3:31:F5:A2:10", buf);
+  TEST_ASSERT_EQUAL_STRING("Conectado", btStateName(BtState::Connected));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_band_lookup);
@@ -131,5 +162,7 @@ int main() {
   RUN_TEST(test_keypad_rounds_to_10hz);
   RUN_TEST(test_wrap_index);
   RUN_TEST(test_model_names);
+  RUN_TEST(test_settings_defaults_and_validation);
+  RUN_TEST(test_bt_address_format);
   return UNITY_END();
 }

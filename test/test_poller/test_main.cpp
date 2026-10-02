@@ -2,6 +2,7 @@
 #include <unity.h>
 
 #include "rig_poller.h"
+#include "switching_cat_port.h"
 
 using namespace ft8x7;
 
@@ -175,6 +176,22 @@ static void test_queue_full() {
   TEST_ASSERT_FALSE(poller.enqueue(c));
 }
 
+static void test_switching_port_follows_target() {
+  FakeRadio cable, bluetooth;
+  bluetooth.freqMode[1] = 0x45;  // 14.574 en el "Bluetooth" para distinguirlos
+  SwitchingCatPort port;
+  Ft8x7Cat cat(port);
+  FreqMode fm;
+  TEST_ASSERT_EQUAL(CatResult::Timeout, cat.readFreqMode(fm));  // sin destino
+  port.setTarget(&cable);
+  TEST_ASSERT_EQUAL(CatResult::Ok, cat.readFreqMode(fm));
+  TEST_ASSERT_EQUAL_UINT32(14074000UL, fm.hz);
+  port.setTarget(&bluetooth);
+  TEST_ASSERT_EQUAL(CatResult::Ok, cat.readFreqMode(fm));
+  TEST_ASSERT_EQUAL_UINT32(14574000UL, fm.hz);
+  TEST_ASSERT_EQUAL(1, cable.opCount);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_schedule_order_in_receive);
@@ -185,5 +202,6 @@ int main() {
   RUN_TEST(test_writes_have_priority_and_force_freq_read);
   RUN_TEST(test_set_frequency_coalesces_and_updates_state);
   RUN_TEST(test_queue_full);
+  RUN_TEST(test_switching_port_follows_target);
   return UNITY_END();
 }

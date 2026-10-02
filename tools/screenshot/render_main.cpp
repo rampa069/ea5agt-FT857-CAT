@@ -20,6 +20,24 @@ class PrintHost : public UiHost {
     return true;
   }
   void settingsChanged(bool urgent) override { printf("  ajustes cambiados (%s)\n", urgent ? "ya" : "luego"); }
+
+  // Bluetooth simulado
+  rigui::BtStatus bt;
+  rigui::BtDevice devices[3] = {
+      {{0x98, 0xD3, 0x31, 0xF5, 0xA2, 0x10}, "HC-05", -48},
+      {{0x9C, 0xB6, 0xD0, 0x93, 0xC3, 0x08}, "ea5iue-laptop", -61},
+      {{0x28, 0x8F, 0xF6, 0xED, 0x3E, 0x11}, "", -80},
+  };
+  size_t deviceCount = 0;
+  rigui::BtStatus btStatus() override { return bt; }
+  size_t btResults(rigui::BtDevice* out, size_t max) override {
+    size_t n = deviceCount < max ? deviceCount : max;
+    for (size_t i = 0; i < n; ++i) out[i] = devices[i];
+    return n;
+  }
+  void btScan() override { printf("  BT: buscar\n"); }
+  void btConnect(const rigui::BtDevice& d) override { printf("  BT: conectar con %s\n", d.name); }
+  void btForget() override { printf("  BT: olvidar\n"); }
 };
 
 static PrintHost host;
@@ -151,6 +169,45 @@ int main(int argc, char** argv) {
   ui.show(Ui::Screen::Settings);
   frame(rx);
   save("ui_settings");
+  ui.show(Ui::Screen::Display);
+  frame(rx);
+  save("ui_display");
+
+  // Bluetooth: elegir transporte, buscar, emparejar
+  ui.show(Ui::Screen::Settings);
+  frame(rx);
+  tap(rx, 253, 116);  // [Bluetooth] -> abre la pantalla Bluetooth (sin adaptador guardado)
+  settle(rx);
+  save("ui_bt_empty");
+  host.bt.state = rigui::BtState::Idle;
+  host.deviceCount = 3;
+  host.bt.scanSerial = 1;
+  settle(rx);
+  save("ui_bt_results");
+  tap(rx, 160, 86);  // HC-05
+  host.bt.state = rigui::BtState::Connecting;
+  host.bt.haveDevice = true;
+  host.bt.device = host.devices[0];
+  host.bt.confirmCode = 482913;
+  settle(rx);
+  save("ui_bt_confirm");
+  host.bt.confirmCode = 0;
+  host.bt.state = rigui::BtState::Connected;
+  settings.btHaveDevice = true;
+  settings.btDevice = host.devices[0];
+  settle(rx);
+  save("ui_bt_connected");
+  tap(rx, 158, 216);  // PIN
+  tap(rx, 40, 107);
+  tap(rx, 120, 107);
+  tap(rx, 200, 107);
+  tap(rx, 40, 144);
+  save("ui_bt_pin");
+  tap(rx, 160, 218);  // OK
+  settle(rx);
+  ui.show(Ui::Screen::Main);
+  frame(rx);
+  save("ui_main_bt");
   ui.show(Ui::Screen::Diag);
   frame(rx);
   save("ui_diag");

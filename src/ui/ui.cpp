@@ -63,6 +63,8 @@ const char* screenTitle(Ui::Screen s) {
     case Ui::Screen::Clar: return "Clarificador";
     case Ui::Screen::Repeater: return "Repetidor/tono";
     case Ui::Screen::Settings: return "Ajustes";
+    case Ui::Screen::Display: return "Pantalla";
+    case Ui::Screen::Bluetooth: return "Bluetooth";
     case Ui::Screen::Diag: return "Diagnostico";
     default: return "";
   }
@@ -100,6 +102,29 @@ void Ui::update(const RigState& s, uint32_t nowMs) {
         host_.settingsChanged(false);
       }
     }
+  }
+
+  // Estado Bluetooth: en su pantalla y, con transporte BT, para el recuadro de enlace.
+  if ((screen_ == Screen::Bluetooth || settings_.transport == rigui::Transport::Bluetooth) &&
+      nowMs - lastBtPollMs_ >= 250) {
+    lastBtPollMs_ = nowMs;
+    rigui::BtStatus st = host_.btStatus();
+    if (screen_ == Screen::Bluetooth) {
+      if (st.scanSerial != bt_.scanSerial) {
+        btResultCount_ = host_.btResults(btResults_, kBtRows);
+        layout();
+        dirty_ = true;
+      } else if (st.state != bt_.state || st.confirmCode != bt_.confirmCode || st.haveDevice != bt_.haveDevice) {
+        bt_ = st;
+        drawBtStatus();
+        refreshButtons();
+      }
+      // No volver a la principal a mitad de una búsqueda o un emparejamiento.
+      if (st.state == rigui::BtState::Scanning || st.state == rigui::BtState::Connecting || st.confirmCode) {
+        lastTouchMs_ = nowMs;
+      }
+    }
+    bt_ = st;
   }
 
   if (screen_ != Screen::Main && screen_ != Screen::Calibrate && nowMs - lastTouchMs_ > kReturnMs) {
@@ -267,10 +292,22 @@ void Ui::layout() {
       break;
     case Screen::Settings:
       for (int i = 0; i < static_cast<int>(rigui::kModelCount); ++i) add(68 + i * 62, 44, 58, 44, Action::SetModel, i);
-      for (int i = 0; i < static_cast<int>(rigui::kBaudCount); ++i) add(68 + i * 82, 94, 78, 44, Action::SetBaud, i);
-      add(68, 144, 60, 44, Action::Brightness, -10);
-      add(246, 144, 68, 44, Action::Brightness, 10);
-      add(68, 194, 246, 42, Action::Calibrate);
+      add(68, 94, 120, 44, Action::SetTransport, 0);
+      add(192, 94, 122, 44, Action::SetTransport, 1);
+      for (int i = 0; i < static_cast<int>(rigui::kBaudCount); ++i) add(68 + i * 82, 144, 78, 44, Action::SetBaud, i);
+      add(68, 194, 120, 42, Action::OpenBluetooth);
+      add(192, 194, 122, 42, Action::OpenDisplay);
+      break;
+    case Screen::Display:
+      add(68, 60, 60, 44, Action::Brightness, -10);
+      add(246, 60, 68, 44, Action::Brightness, 10);
+      add(68, 120, 246, 44, Action::Calibrate);
+      break;
+    case Screen::Bluetooth:
+      for (size_t i = 0; i < btResultCount_; ++i) add(6, 66 + i * 44, 308, 40, Action::BtSelect, i);
+      add(6, 196, 98, 40, Action::BtScan);
+      add(108, 196, 100, 40, Action::BtPin);
+      add(212, 196, 102, 40, Action::BtForget);
       break;
     default:
       break;
@@ -318,6 +355,21 @@ void Ui::buttonLabel(const Button& b, char* buf, size_t len) const {
     case Action::SetBaud: snprintf(buf, len, "%lu", static_cast<unsigned long>(rigui::kBaudRates[b.arg])); return;
     case Action::Brightness: t = b.arg < 0 ? "-" : "+"; break;
     case Action::Calibrate: t = "Calibrar tactil"; break;
+    case Action::SetTransport: t = b.arg ? "Bluetooth" : "Cable"; break;
+    case Action::OpenBluetooth: t = "Emparejar"; break;
+    case Action::OpenDisplay: t = "Pantalla"; break;
+    case Action::BtScan: t = "Buscar"; break;
+    case Action::BtPin: snprintf(buf, len, "PIN %s", settings_.btPin); return;
+    case Action::BtForget: t = "Olvidar"; break;
+    case Action::BtSelect: {
+      const rigui::BtDevice& d = btResults_[b.arg];
+      if (d.name[0]) {
+        snprintf(buf, len, "%s", d.name);
+      } else {
+        rigui::formatBtAddr(d.addr, buf, len);
+      }
+      return;
+    }
     default: break;
   }
   snprintf(buf, len, "%s", t);
@@ -342,7 +394,20 @@ Ui::Style Ui::buttonStyle(const Button& b) const {
     case Action::RptShift: return kRptShifts[b.arg] == rptShift_ ? Style::On : Style::Normal;
     case Action::ToneMode: return kToneModes[b.arg] == toneMode_ ? Style::On : Style::Normal;
     case Action::SetModel: return static_cast<int>(settings_.model) == b.arg ? Style::On : Style::Normal;
-    case Action::SetBaud: return rigui::kBaudRates[b.arg] == settings_.baud ? Style::On : Style::Normal;
+    case Action::SetBaud:
+      // Por Bluetooth la velocidad hacia la radio la fija el adaptador.
+      if (settings_.transport == rigui::Transport::Bluetooth) return Style::Disabled;
+      return rigui::kBaudRates[b.arg] == settings_.baud ? Style::On : Style::Normal;
+    case Action::SetTransport:
+      return static_cast<int>(settings_.transport) == b.arg ? Style::On : Style::Normal;
+    case Action::BtScan:
+      return bt_.state == rigui::BtState::Scanning || bt_.state == rigui::BtState::Connecting ? Style::Disabled
+                                                                                               : Style::Normal;
+    case Action::BtForget: return settings_.btHaveDevice ? Style::Normal : Style::Disabled;
+    case Action::BtSelect:
+      return settings_.btHaveDevice && memcmp(settings_.btDevice.addr, btResults_[b.arg].addr, 6) == 0 ? Style::On
+                                                                                                         : Style::Normal;
+    case Action::Key: return keypadPin_ && b.arg == '.' ? Style::Disabled : Style::Normal;
     default: return Style::Normal;
   }
 }
@@ -500,7 +565,7 @@ void Ui::redraw(const RigState& s) {
     return;
   }
   tft_.fillScreen(th_.bg);
-  drawHeader(screenTitle(screen_));
+  drawHeader(screen_ == Screen::Keypad && keypadPin_ ? "PIN Bluetooth" : screenTitle(screen_));
   refreshButtons();
   switch (screen_) {
     case Screen::Keypad: drawKeypadField(); break;
@@ -516,15 +581,29 @@ void Ui::redraw(const RigState& s) {
       drawLabel(6, 152, "Tono");
       drawRepeaterFields();
       break;
-    case Screen::Settings: {
+    case Screen::Settings:
       drawLabel(6, 66, "Radio");
-      drawLabel(6, 116, "CAT");
-      drawLabel(6, 166, "Brillo");
+      drawLabel(6, 116, "Enlace");
+      drawLabel(6, 166, "Baudios");
+      break;
+    case Screen::Display: {
+      drawLabel(6, 82, "Brillo");
       char buf[8];
       snprintf(buf, sizeof(buf), "%u %%", settings_.brightness);
-      drawField(132, 144, 110, 44, buf, th_.text, 4);
+      drawField(132, 60, 110, 44, buf, th_.text, 4);
       break;
     }
+    case Screen::Bluetooth:
+      drawBtStatus();
+      if (btResultCount_ == 0) {
+        tft_.setTextColor(th_.textDim, th_.bg);
+        tft_.setTextDatum(MC_DATUM);
+        tft_.setTextPadding(0);
+        tft_.drawString(bt_.state == rigui::BtState::Scanning ? "Buscando dispositivos (10 s)..."
+                                                             : "Pulsa Buscar con el adaptador encendido",
+                        W / 2, 120, 2);
+      }
+      break;
     case Screen::Diag: drawDiag(s); break;
     default: break;
   }
@@ -588,14 +667,16 @@ void Ui::drawMainDynamic(const RigState& s, bool force) {
     cache_.model = model;
     cache_.lock = lock_;
   }
-  if (linkChanged) {
-    uint16_t c = live ? th_.linkOk : th_.linkLost;
+  const char* link = linkLabel(live);
+  if (linkChanged || link != cache_.link) {
+    uint16_t c = live ? th_.linkOk : (link[0] == 'B' ? th_.boxStale : th_.linkLost);
     tft_.fillRoundRect(236, 1, 80, 18, 4, c);
     tft_.setTextColor(th_.text, c);
     tft_.setTextDatum(MC_DATUM);
     tft_.setTextPadding(0);
-    tft_.drawString(live ? "CAT OK" : "NO LINK", 276, 10, 2);
+    tft_.drawString(link, 276, 10, 2);
     cache_.linked = live;
+    cache_.link = link;
   }
 
   // Frecuencia (atenuada sin enlace)
@@ -711,8 +792,15 @@ void Ui::drawKeypadField() {
   char buf[24];
   uint16_t color = th_.freq;
   if (keypadError_) {
-    snprintf(buf, sizeof(buf), "Fuera de rango");
+    snprintf(buf, sizeof(buf), keypadPin_ ? "De 4 a 8 cifras" : "Fuera de rango");
     color = th_.warn;
+  } else if (keypadPin_) {
+    if (keypad_.empty()) {
+      snprintf(buf, sizeof(buf), "%s", settings_.btPin);
+      color = th_.textDim;
+    } else {
+      snprintf(buf, sizeof(buf), "%s_", keypad_.text());
+    }
   } else if (keypad_.empty()) {
     if (last_.haveFreq) ft8x7::formatFrequency(last_.freq.hz, buf, sizeof(buf));
     else snprintf(buf, sizeof(buf), "MHz");
@@ -761,10 +849,15 @@ void Ui::drawDiag(const RigState& s) {
   snprintf(rows[1].value, sizeof(rows[1].value), "%lu", static_cast<unsigned long>(s.okCount));
   snprintf(rows[2].value, sizeof(rows[2].value), "%lu", static_cast<unsigned long>(s.errorCount));
   snprintf(rows[3].value, sizeof(rows[3].value), "%lu", static_cast<unsigned long>(s.writeCount));
-  snprintf(rows[4].value, sizeof(rows[4].value), "%lu baudios 8N2", static_cast<unsigned long>(settings_.baud));
+  if (settings_.transport == rigui::Transport::Bluetooth) {
+    snprintf(rows[4].value, sizeof(rows[4].value), "BT %s",
+             bt_.haveDevice && bt_.device.name[0] ? bt_.device.name : rigui::btStateName(bt_.state));
+  } else {
+    snprintf(rows[4].value, sizeof(rows[4].value), "Cable %lu 8N2", static_cast<unsigned long>(settings_.baud));
+  }
   snprintf(rows[5].value, sizeof(rows[5].value), "%s", rigui::modelName(settings_.model));
   snprintf(rows[6].value, sizeof(rows[6].value), "%s", __DATE__);
-  const char* labels[7] = {"Enlace", "Lecturas OK", "Errores", "Escrituras", "CAT", "Radio", "Firmware"};
+  const char* labels[7] = {"Enlace", "Lecturas OK", "Errores", "Escrituras", "Conexion", "Radio", "Firmware"};
   for (int i = 0; i < 7; ++i) {
     int16_t y = 48 + i * 24;
     tft_.setTextDatum(TL_DATUM);
@@ -776,6 +869,39 @@ void Ui::drawDiag(const RigState& s) {
     tft_.drawString(rows[i].value, 130, y, 2);
   }
   tft_.setTextPadding(0);
+}
+
+const char* Ui::linkLabel(bool live) const {
+  bool viaBt = settings_.transport == rigui::Transport::Bluetooth;
+  if (live) return viaBt ? "BT OK" : "CAT OK";
+  if (viaBt && (bt_.state == rigui::BtState::Connecting || bt_.state == rigui::BtState::Scanning)) return "BT ...";
+  return "NO LINK";
+}
+
+void Ui::drawBtStatus() {
+  char buf[48];
+  uint16_t color = th_.text;
+  if (bt_.confirmCode) {
+    snprintf(buf, sizeof(buf), "Confirma el codigo %06lu", static_cast<unsigned long>(bt_.confirmCode));
+    color = th_.accent;
+  } else if (settings_.transport != rigui::Transport::Bluetooth) {
+    snprintf(buf, sizeof(buf), "Enlace por cable (cambialo en Ajustes)");
+    color = th_.textDim;
+  } else if ((bt_.state == rigui::BtState::Connected || bt_.state == rigui::BtState::Connecting ||
+              bt_.state == rigui::BtState::Failed) && bt_.haveDevice) {
+    const char* name = bt_.device.name[0] ? bt_.device.name : "adaptador";
+    snprintf(buf, sizeof(buf), "%s: %s", rigui::btStateName(bt_.state), name);
+    color = bt_.state == rigui::BtState::Connected ? th_.sMeter
+            : bt_.state == rigui::BtState::Failed  ? th_.warn
+                                                   : th_.text;
+  } else {
+    snprintf(buf, sizeof(buf), "%s", rigui::btStateName(bt_.state));
+  }
+  tft_.fillRect(0, 42, W, 22, th_.bg);
+  tft_.setTextColor(color, th_.bg);
+  tft_.setTextDatum(MC_DATUM);
+  tft_.setTextPadding(0);
+  tft_.drawString(buf, W / 2, 53, 2);
 }
 
 void Ui::drawCalibrate() {
@@ -810,7 +936,7 @@ void Ui::calibrationTouch(rigui::RawPoint raw) {
   if (rigui::computeCalibration(calibRaw_, W, H, CAL_MARGIN, cal)) {
     settings_.touch = cal;
     host_.settingsChanged(true);
-    show(Screen::Settings);
+    show(Screen::Display);
     toast("Tactil calibrado");
   } else {
     calibStep_ = 0;
@@ -841,6 +967,7 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
     case Action::OpenKeypad:
       keypad_.clear();
       keypadError_ = false;
+      keypadPin_ = false;
       show(Screen::Keypad);
       break;
     case Action::OpenMode: show(Screen::Mode); break;
@@ -850,7 +977,7 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
     case Action::OpenSettings: show(Screen::Settings); break;
     case Action::OpenDiag: show(Screen::Diag); break;
     case Action::OpenRepeater: show(Screen::Repeater); break;
-    case Action::Back: show(Screen::Main); break;
+    case Action::Back: show(screen_ == Screen::Keypad && keypadPin_ ? Screen::Bluetooth : Screen::Main); break;
 
     case Action::TuneDown:
     case Action::TuneUp: {
@@ -900,6 +1027,7 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
     }
 
     case Action::Key:
+      if (keypadPin_ && (b.arg == '.' || strlen(keypad_.text()) >= sizeof(settings_.btPin) - 1)) return;
       keypad_.press(static_cast<char>(b.arg));
       keypadError_ = false;
       drawKeypadField();
@@ -915,6 +1043,19 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
       drawKeypadField();
       break;
     case Action::KeyOk: {
+      if (keypadPin_) {
+        size_t n = strlen(keypad_.text());
+        if (n < 4) {
+          keypadError_ = true;
+          drawKeypadField();
+          return;
+        }
+        snprintf(settings_.btPin, sizeof(settings_.btPin), "%s", keypad_.text());
+        host_.settingsChanged(true);
+        show(Screen::Bluetooth);
+        toast("PIN guardado");
+        return;
+      }
       uint32_t hz;
       if (!keypad_.value(hz)) {
         keypadError_ = true;
@@ -1005,12 +1146,60 @@ void Ui::perform(const Button& b, const RigState& s, bool repeat) {
       settings_.brightness = static_cast<uint8_t>(v < 10 ? 10 : (v > 100 ? 100 : v));
       host_.settingsChanged(true);
       snprintf(buf, sizeof(buf), "%u %%", settings_.brightness);
-      drawField(132, 144, 110, 44, buf, th_.text, 4);
+      drawField(132, 60, 110, 44, buf, th_.text, 4);
       break;
     }
     case Action::Calibrate:
       calibStep_ = 0;
       show(Screen::Calibrate);
+      break;
+    case Action::OpenDisplay: show(Screen::Display); break;
+    case Action::OpenBluetooth:
+      bt_ = host_.btStatus();
+      btResultCount_ = host_.btResults(btResults_, kBtRows);
+      show(Screen::Bluetooth);
+      break;
+    case Action::SetTransport:
+      settings_.transport = b.arg ? rigui::Transport::Bluetooth : rigui::Transport::Cable;
+      host_.settingsChanged(true);
+      if (settings_.transport == rigui::Transport::Bluetooth && !settings_.btHaveDevice) {
+        bt_ = host_.btStatus();
+        btResultCount_ = host_.btResults(btResults_, kBtRows);
+        show(Screen::Bluetooth);
+      } else {
+        refreshButtons();
+      }
+      break;
+    case Action::BtScan:
+      if (settings_.transport != rigui::Transport::Bluetooth) {
+        toast("Elige Bluetooth en Ajustes");
+        return;
+      }
+      host_.btScan();
+      bt_.state = rigui::BtState::Scanning;
+      btResultCount_ = 0;
+      layout();
+      dirty_ = true;
+      break;
+    case Action::BtSelect: {
+      const rigui::BtDevice d = btResults_[b.arg];
+      host_.btConnect(d);
+      bt_.state = rigui::BtState::Connecting;
+      snprintf(buf, sizeof(buf), "Conectando con %s", d.name[0] ? d.name : "adaptador");
+      toast(buf);
+      dirty_ = true;
+      break;
+    }
+    case Action::BtPin:
+      keypad_.clear();
+      keypadError_ = false;
+      keypadPin_ = true;
+      show(Screen::Keypad);
+      break;
+    case Action::BtForget:
+      host_.btForget();
+      toast("Adaptador olvidado");
+      dirty_ = true;
       break;
     case Action::None:
       break;

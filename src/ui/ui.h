@@ -8,6 +8,7 @@
 
 #include "rig_poller.h"
 #include "rig_ui_logic.h"
+#include "bt_types.h"
 #include "theme.h"
 #include "touch_filter.h"
 #include "ui_settings.h"
@@ -18,11 +19,20 @@ class UiHost {
   virtual bool sendCat(const ft8x7::Command& cmd) = 0;  // encola; false si la cola está llena
   // urgent: aplicar ya (brillo, baudios, táctil) y guardar; si no, guardar cuando convenga.
   virtual void settingsChanged(bool urgent) = 0;
+
+  // Bluetooth (transporte alternativo al cable)
+  virtual rigui::BtStatus btStatus() = 0;
+  virtual size_t btResults(rigui::BtDevice* out, size_t max) = 0;
+  virtual void btScan() = 0;
+  virtual void btConnect(const rigui::BtDevice& device) = 0;
+  virtual void btForget() = 0;
 };
 
 class Ui {
  public:
-  enum class Screen : uint8_t { Main, Mode, Band, Keypad, Menu, Clar, Repeater, Settings, Diag, Calibrate };
+  enum class Screen : uint8_t {
+    Main, Mode, Band, Keypad, Menu, Clar, Repeater, Settings, Display, Bluetooth, Diag, Calibrate
+  };
 
   Ui(TFT_eSPI& tft, const Theme& theme, rigui::Settings& settings, UiHost& host)
       : tft_(tft), th_(theme), settings_(settings), host_(host) {}
@@ -39,6 +49,7 @@ class Ui {
     SetMode, SetBand, Key, KeyDel, KeyClear, KeyOk, Split, OpenClar, OpenRepeater, Lock,
     OpenSettings, OpenDiag, ClarToggle, ClarDelta, RptShift, RptOffset, ToneMode, ToneValue,
     SetModel, SetBaud, Brightness, Calibrate,
+    SetTransport, OpenDisplay, OpenBluetooth, BtScan, BtSelect, BtPin, BtForget,
   };
   enum class Style : uint8_t { Normal, On, Disabled, Custom };
 
@@ -74,6 +85,8 @@ class Ui {
   void drawRepeaterFields();
   void drawDiag(const ft8x7::RigState& s);
   void drawCalibrate();
+  void drawBtStatus();
+  const char* linkLabel(bool live) const;
 
   // Acciones
   void perform(const Button& b, const ft8x7::RigState& s, bool repeat);
@@ -116,6 +129,14 @@ class Ui {
 
   rigui::KeypadEntry keypad_;
   bool keypadError_ = false;
+  bool keypadPin_ = false;  // el teclado edita el PIN Bluetooth en vez de una frecuencia
+
+  // Bluetooth: última copia del estado y de la búsqueda
+  static constexpr size_t kBtRows = 3;
+  rigui::BtStatus bt_{};
+  rigui::BtDevice btResults_[kBtRows];
+  size_t btResultCount_ = 0;
+  uint32_t lastBtPollMs_ = 0;
 
   uint8_t calibStep_ = 0;
   rigui::RawPoint calibRaw_[5] = {};
@@ -125,6 +146,7 @@ class Ui {
   struct {
     int linked = -1, freqColor = -1, rawMode = -1, band = -1, split = -1, sqlClar = -1, tx = -1;
     int meterLevel = -1, meterTx = -1, swr = -1, model = -1, lock = -1;
+    const char* link = nullptr;
     uint32_t freqHz = 0;
   } cache_;
 };

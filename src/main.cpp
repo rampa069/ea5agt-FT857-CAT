@@ -5,11 +5,14 @@
 #include <XPT2046_Touchscreen.h>
 
 #include <atomic>
+#include <string.h>
 
 #include "arduino_cat_port.h"
 #include "board_cyd.h"
+#include "bt/bt_link.h"
 #include "rig_format.h"
 #include "rig_poller.h"
+#include "switching_cat_port.h"
 #include "touch_filter.h"
 #include "ui/ui.h"
 #include "ui_settings.h"
@@ -20,14 +23,17 @@ static XPT2046_Touchscreen touch(TOUCH_CS, TOUCH_IRQ);
 
 #if CAT_OVER_USB
 // El CAT ocupa el UART0 del USB: no se puede usar Serial para log.
-static ft8x7::ArduinoCatPort catPort(Serial);
+static ft8x7::ArduinoCatPort uartPort(Serial);
 #define LOG(...) \
   do {           \
   } while (0)
 #else
-static ft8x7::ArduinoCatPort catPort(Serial2);
+static ft8x7::ArduinoCatPort uartPort(Serial2);
 #define LOG(...) Serial.printf(__VA_ARGS__)
 #endif
+static BtLink btLink;
+// El driver usa siempre este puerto; debajo se elige cable (UART) o Bluetooth.
+static ft8x7::SwitchingCatPort catPort;
 static ft8x7::Ft8x7Cat cat(catPort);
 static ft8x7::RigPoller poller(cat);
 
@@ -36,6 +42,25 @@ static ft8x7::RigState sharedState;
 static portMUX_TYPE stateMux = portMUX_INITIALIZER_UNLOCKED;
 // Cambio de baudios pedido desde Ajustes; lo aplica la tarea CAT, dueña del puerto.
 static std::atomic<uint32_t> pendingBaud{0};
+
+// Configuración de transporte que lee la tarea CAT (copia protegida de los ajustes).
+struct LinkConfig {
+  rigui::Transport transport;
+  bool haveDevice;
+  rigui::BtDevice device;
+  char pin[sizeof(rigui::Settings::btPin)];
+};
+static LinkConfig linkConfig;
+static portMUX_TYPE linkMux = portMUX_INITIALIZER_UNLOCKED;
+
+static void publishLinkConfig(const rigui::Settings& st) {
+  portENTER_CRITICAL(&linkMux);
+  linkConfig.transport = st.transport;
+  linkConfig.haveDevice = st.btHaveDevice;
+  linkConfig.device = st.btDevice;
+  memcpy(linkConfig.pin, st.btPin, sizeof(linkConfig.pin));
+  portEXIT_CRITICAL(&linkMux);
+}
 
 static rigui::Settings settings;
 static Preferences prefs;
@@ -47,19 +72,41 @@ static rigui::TouchFilter touchFilter;
 
 static void beginCatPort(uint32_t baud) {
 #if CAT_OVER_USB
-  catPort.begin(baud, -1, -1);  // pines por defecto del UART0 (GPIO3/GPIO1)
+  uartPort.begin(baud, -1, -1);  // pines por defecto del UART0 (GPIO3/GPIO1)
 #else
-  catPort.begin(baud, CAT_RX_PIN, CAT_TX_PIN);
+  uartPort.begin(baud, CAT_RX_PIN, CAT_TX_PIN);
 #endif
 }
 
 // Tarea en el núcleo 0: el sondeo bloquea hasta 200 ms por comando y no debe frenar la UI.
 static void catTask(void*) {
+  rigui::Transport active = rigui::Transport::Cable;
+  catPort.setTarget(&uartPort);
   for (;;) {
     uint32_t baud = pendingBaud.exchange(0);
     if (baud) {
       beginCatPort(baud);
     }
+
+    LinkConfig cfg;
+    portENTER_CRITICAL(&linkMux);
+    cfg = linkConfig;
+    portEXIT_CRITICAL(&linkMux);
+    if (cfg.transport != active) {
+      active = cfg.transport;
+      if (active == rigui::Transport::Bluetooth) {
+        btLink.start("CYD-CAT");
+        catPort.setTarget(&btLink.port());
+      } else {
+        catPort.setTarget(&uartPort);
+        btLink.stop();
+      }
+      LOG("Transporte: %s\n", active == rigui::Transport::Bluetooth ? "Bluetooth" : "cable");
+    }
+    if (active == rigui::Transport::Bluetooth) {
+      btLink.service(cfg.haveDevice, cfg.device, cfg.pin, millis());  // puede bloquear al buscar/conectar
+    }
+
     if (poller.step(millis())) {
       portENTER_CRITICAL(&stateMux);
       sharedState = poller.state();
@@ -101,8 +148,22 @@ class Host : public UiHost {
  public:
   bool sendCat(const ft8x7::Command& cmd) override { return poller.enqueue(cmd); }
 
+  rigui::BtStatus btStatus() override { return btLink.status(); }
+  size_t btResults(rigui::BtDevice* out, size_t max) override { return btLink.results(out, max); }
+  void btScan() override { btLink.requestScan(); }
+  void btConnect(const rigui::BtDevice& device) override { btLink.requestConnect(device); }
+  void btForget() override {
+    if (settings.btHaveDevice) {
+      btLink.requestForget(settings.btDevice.addr);
+    }
+    settings.btHaveDevice = false;
+    settings.btDevice = rigui::BtDevice{};
+    settingsChanged(true);
+  }
+
   void settingsChanged(bool urgent) override {
     if (urgent) {
+      publishLinkConfig(settings);
       applyBrightness();
       if (settings.baud != appliedBaud_) {
         appliedBaud_ = settings.baud;
@@ -178,6 +239,7 @@ void setup() {
 
   host.appliedBaud_ = settings.baud;
   beginCatPort(settings.baud);
+  publishLinkConfig(settings);
   xTaskCreatePinnedToCore(catTask, "cat", 4096, nullptr, 1, nullptr, 0);
 
   ui.begin();
@@ -195,6 +257,14 @@ void loop() {
   // LED de la placa: rojo en TX, verde con enlace, apagado sin enlace (activo a nivel bajo).
   digitalWrite(LED_R, !(s.linked && s.tx.transmitting));
   digitalWrite(LED_G, !(s.linked && !s.tx.transmitting));
+
+  // Adaptador Bluetooth recién emparejado a petición del usuario: queda como el de siempre.
+  rigui::BtDevice paired;
+  if (btLink.takeNewlyPaired(paired)) {
+    settings.btHaveDevice = true;
+    settings.btDevice = paired;
+    host.settingsChanged(true);
+  }
 
   if (settingsDirty && now - settingsDirtySinceMs >= kLazySaveMs) {
     saveSettings();

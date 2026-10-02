@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 
+#include "bt_types.h"
 #include "rig_ui_logic.h"
 #include "touch_filter.h"
 
@@ -13,7 +14,7 @@ constexpr uint32_t kBaudRates[] = {4800, 9600, 38400};
 constexpr size_t kBaudCount = 3;
 
 struct Settings {
-  static constexpr uint16_t kVersion = 1;
+  static constexpr uint16_t kVersion = 2;
 
   uint16_t version;
   RigModel model;
@@ -26,6 +27,11 @@ struct Settings {
   uint32_t rptOffsetHz;
   uint8_t ctcssIndex;
   uint8_t dcsIndex;
+  // Conexión con la radio
+  Transport transport;
+  bool btHaveDevice;
+  BtDevice btDevice;
+  char btPin[9];  // PIN clásico (HC-05/HC-06: 1234)
 
   void setDefaults(const TouchCal& defaultTouch);
   bool valid() const;  // tras cargar de NVS
